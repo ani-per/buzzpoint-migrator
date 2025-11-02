@@ -54,6 +54,7 @@ const parseMetadata = (metadata, metadataType) => {
             category = subcategoryMap[subcategory] || subcategory;
         }
     }
+    subcategory = subcategory.replaceAll(category, "").trim()
 
     return {
         category,
