@@ -62,7 +62,6 @@ const insertTossup = (packetId, questionNumber, question, answer, answer_sanitiz
             slugDictionary[answerSlug] = 1;
         }
 
-        // console.log(`Category: ${category ? category : null} (${category ? slugify(category.toLowerCase()) : null}), Subcategory: ${subcategory ? subcategory : null} (${subcategory ? slugify(subcategory.toLowerCase()) : null}), Subsubcategory: ${subsubcategory ? slugify(subsubcategory.toLowerCase()) : null}`);
         questionId = insertQuestionStatement.run(
             answerSlug, metadata,
             author, editor,
@@ -70,7 +69,9 @@ const insertTossup = (packetId, questionNumber, question, answer, answer_sanitiz
             subcategory ? subcategory : null, subcategory ? slugify(subcategory.toLowerCase()) : null,
             subsubcategory ? slugify(subsubcategory.toLowerCase()) : null
         ).lastInsertRowid;
-        tossupId = insertTossupStatement.run(questionId, question, answer, answer_sanitized, shortenAnswerline(answer_sanitized)).lastInsertRowid;
+        tossupId = insertTossupStatement.run(
+            questionId, question, answer, answer_sanitized, shortenAnswerline(answer_sanitized)
+        ).lastInsertRowid;
         insertTossupHashStatement.run(questionHash, questionId, tossupId);
     }
 
@@ -96,7 +97,6 @@ const insertBonus = (packetId, questionNumber, leadin, answers, answersSlug, par
                 slugDictionary[answersSlug] = 1;
             }
 
-            // console.log(`Category: ${category ? category : null} (${category ? slugify(category.toLowerCase()) : null}), Subcategory: ${subcategory ? subcategory : null} (${subcategory ? slugify(subcategory.toLowerCase()) : null}), Subsubcategory: ${subsubcategory ? slugify(subsubcategory.toLowerCase()) : null}`);
             questionId = insertQuestionStatement.run(
                 answersSlug, metadata,
                 author, editor,
@@ -107,12 +107,14 @@ const insertBonus = (packetId, questionNumber, leadin, answers, answersSlug, par
             bonusId = insertBonusStatement.run(questionId, leadin, removeTags(leadin)).lastInsertRowid;
 
             for (let i = 0; i < answers.length; i++) {
-                insertBonusPartStatement.run(bonusId, i + 1,
+                insertBonusPartStatement.run(
+                    bonusId, i + 1,
                     parts[i], removeTags(parts[i]),
                     answers[i], removeTags(answers[i]),
                     primaryAnswers[i],
                     values ? values[i] : null,
-                    difficultyModifiers ? difficultyModifiers[i] : null);
+                    difficultyModifiers ? difficultyModifiers[i] : null
+                );
             }
 
             insertBonusHashStatement.run(questionHash, questionId, bonusId);
