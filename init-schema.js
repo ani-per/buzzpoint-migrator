@@ -9,7 +9,9 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT,
     slug TEXT,
-    difficulty TEXT
+    difficulty TEXT,
+    format TEXT,
+    bonuses INTEGER
   )
 `);
 
@@ -31,6 +33,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     question_set_edition_id INTEGER,
     name TEXT,
+    number INTEGER,
     FOREIGN KEY (question_set_edition_id) REFERENCES question_set_edition (id) ON DELETE CASCADE
   )
 `);
@@ -175,7 +178,9 @@ db.exec(`
     team_id INTEGER,
     name TEXT,
     slug TEXT,
+    question_set_id INTEGER,
     FOREIGN KEY (team_id) REFERENCES team (id) ON DELETE CASCADE
+    FOREIGN KEY (question_set_id) REFERENCES question_set (id) ON DELETE CASCADE
   )
 `);
 

@@ -22,15 +22,25 @@ const overWrite = process.argv.find(a => a === overWriteFlag);
 const insertTournamentStatement = db.prepare('INSERT INTO tournament (name, slug, question_set_edition_id, location, level, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?, ?)');
 const insertRoundStatement = db.prepare('INSERT INTO round (tournament_id, number, packet_id, exclude_from_individual) VALUES (?, ?, ?, ?)');
 const insertTeamStatement = db.prepare('INSERT INTO team (tournament_id, name, slug) VALUES (?, ?, ?)');
-const insertPlayerStatement = db.prepare('INSERT INTO player (team_id, name, slug) VALUES (?, ?, ?)');
+const insertPlayerStatement = db.prepare('INSERT INTO player (team_id, name, slug, question_set_id) VALUES (?, ?, ?, ?)');
 const insertGameStatement = db.prepare('INSERT INTO game (round_id, tossups_read, team_one_id, team_two_id) VALUES (?, ?, ?, ?)');
 const insertBuzzStatement = db.prepare('INSERT INTO buzz (player_id, game_id, tossup_id, buzz_position, value) VALUES (?, ?, ?, ?, ?)');
 const insertBonusPartDirectStatement = db.prepare('INSERT INTO bonus_part_direct (team_id, game_id, bonus_part_id, value) VALUES (?, ?, ?, ?)');
 
 const deleteTournamentStatement = db.prepare('DELETE FROM tournament WHERE id = ?');
 const findTournamentStatement = db.prepare('SELECT id FROM tournament WHERE slug = ?');
-const findQuestionSetEditionStatement = db.prepare('SELECT question_set_edition.id FROM question_set JOIN question_set_edition ON question_set.id = question_set_id WHERE question_set.name = ? AND question_set_edition.name = ?');
-const findPacketStatement = db.prepare('SELECT id FROM packet WHERE question_set_edition_id = ? and name = ?');
+const findQuestionSetByIdStatement = db.prepare('SELECT * FROM question_set WHERE id = ?');
+const findQuestionSetByNameStatement = db.prepare('SELECT * FROM question_set WHERE name = ?');
+const findQuestionSetEditionStatement = db.prepare(`
+    SELECT  question_set.id as question_set_id,
+            question_set_edition.id as question_set_edition_id
+    FROM question_set
+    JOIN question_set_edition ON question_set.id = question_set_id
+    WHERE question_set.name = ? AND question_set_edition.name = ?
+`);
+const findPacketByNameStatement = db.prepare('SELECT id FROM packet WHERE question_set_edition_id = ? and name = ?');
+const findPacketByNumberStatement = db.prepare('SELECT id FROM packet WHERE question_set_edition_id = ? and number = ?');
+const findPacketByIdStatement = db.prepare('SELECT * FROM packet WHERE question_set_edition_id = ? and id = ?');
 const findTossupStatement = db.prepare(`
     SELECT tossup.id
     FROM packet_question
@@ -46,15 +56,17 @@ const findBonusPartsStatement = db.prepare(`
     JOIN bonus_part ON bonus.id = bonus_id
     WHERE packet_id = ? and question_number = ?
 `);
-const findPlayerStatement = db.prepare(`
+const findPlayerBySetIdStatement = db.prepare(`
     SELECT *
     FROM player
-    WHERE name = ?
+    WHERE name = ? and question_set_id = ?
 `);
 
 const migrateTournaments = async () => {
     try {
-        const subFolders = await fs.readdir(tournamentsPath);
+        const subFolders = (await fs.readdir(tournamentsPath, { withFileTypes: true }))
+            .filter(f => !(["DS_Store", "zip"].map(s => f.name.endsWith(`${s}`)).some(f => f)))
+            .map(f => f.name);
 
         for (const subFolder of subFolders) {
             const subFolderPath = path.join(tournamentsPath, subFolder);
@@ -69,8 +81,8 @@ const migrateTournaments = async () => {
                 const tournamentData = await fs.readFile(indexPath, 'utf8');
                 const tournament = JSON.parse(tournamentData);
                 const gamesFilePath = path.join(subFolderPath, gamesFolderName);
-                const { name, slug, set, edition, location, level, start_date, end_date, rounds_to_exclude_from_individual_stats, rounds } = tournament;
-                const { id: existingTournamentId } = findTournamentStatement.get(slug) || {};
+                const { name: tournamentName, slug: tournamentSlug, set, edition, location, level, start_date, end_date, rounds_to_exclude_from_individual_stats, rounds } = tournament;
+                const { id: existingTournamentId } = findTournamentStatement.get(tournamentSlug) || {};
 
                 if (existingTournamentId) {
                     if (overWrite) {
@@ -81,15 +93,14 @@ const migrateTournaments = async () => {
                     }
                 }
 
-                console.log(`${subFolder} - Set: ${set}, Edition: ${edition}`);
-                const { id: questionSetEditionId } = findQuestionSetEditionStatement.get(set, edition);
-                // console.log(`\tID: ${questionSetEditionId}`);
+                console.log(`Tournament: ${subFolder} | Set: ${set} | Edition: ${edition}`);
+                const { question_set_id: setId, question_set_edition_id: editionId } = findQuestionSetEditionStatement.get(set, edition);
                 const roundDictionary = {};
                 const playerDictionary = {};
                 const teamDictionary = {};
                 const tossupDictionary = {};
                 const bonusDictionary = {};
-                const { lastInsertRowid: tournamentId } = insertTournamentStatement.run(name, slug, questionSetEditionId, location, level, start_date, end_date);
+                const { lastInsertRowid: tournamentId } = insertTournamentStatement.run(tournamentName, tournamentSlug, editionId, location, level, start_date, end_date);
 
                 // if round mappings, buzzes, and bonuses are part of index.json, use that instead of game_files
                 // NOT recommended or documented, use the game_files folder and the qbj files if you have them
@@ -111,7 +122,7 @@ const migrateTournaments = async () => {
                         // update round dictionary if needed
                         if (!roundDictionary[round]) {
                             const packetName = rounds.find(r => r.number === round).packet;
-                            const { id: packetId } = findPacketStatement.get(questionSetEditionId, packetName);
+                            const { id: packetId } = findPacketByNameStatement.get(editionId, packetName);
                             const { lastInsertRowid: roundId } = insertRoundStatement.run(tournamentId, round, packetId, rounds_to_exclude_from_individual_stats?.find(r => r === round) ? 1 : 0);
 
                             roundDictionary[round] = { packetId, roundId };
@@ -138,12 +149,12 @@ const migrateTournaments = async () => {
                         // update player dictionary if needed
                         if (!playerDictionary[playerKey]) {
                             let playerSlug = slugify(player, slugifyOptions);
-                            let existingPlayers = findPlayerStatement.all(player);
+                            let existingPlayers = findPlayerBySetIdStatement.all(player, setId);
                             if (existingPlayers.length > 0) {
                                 playerSlug += `-${existingPlayers.length + 1}`;
                                 console.log(`\tDuplicate player name found - ${player}. Using slug ${playerSlug}`);
                             }
-                            const { lastInsertRowid: playerId } = insertPlayerStatement.run(teamDictionary[team], player, playerSlug);
+                            const { lastInsertRowid: playerId } = insertPlayerStatement.run(teamDictionary[team], player, playerSlug, setId);
 
                             playerDictionary[playerKey] = playerId;
                         }
@@ -153,7 +164,7 @@ const migrateTournaments = async () => {
                             let packet = findTossupStatement.get(packetId, questionNumber);
 
                             if (!packet) {
-                                console.warn(`Unable to find tossup ${questionNumber} in packet ID ${packetId} of tournament ID ${tournamentId} (${name}) in game between ${team} and ${opponent}.`);
+                                console.warn(`Unable to find tossup ${questionNumber} in packet ID ${packetId} of tournament ID ${tournamentId} (${tournamentName}) in game between ${team} and ${opponent}.`);
                                 continue;
                             }
 
@@ -198,11 +209,13 @@ const migrateTournaments = async () => {
                 }
 
                 if (!existsSync(gamesFilePath)) {
-                    console.log(`Skipping ${subFolder} as ${gamesFolderName} folder not found.`);
+                    console.log(`\tSkipping ${subFolder} as ${gamesFolderName} folder not found.`);
                     continue;
                 }
 
-                const gameFiles = await fs.readdir(gamesFilePath);
+                const gameFiles = (await fs.readdir(gamesFilePath, { withFileTypes: true }))
+                    .filter(f => !(["DS_Store", "zip"].map(s => f.name.endsWith(`${s}`)).some(f => f)))
+                    .map(f => f.name);
 
                 for (const gameFile of gameFiles) {
                     const gameFilePath = path.join(gamesFilePath, gameFile);
@@ -211,12 +224,12 @@ const migrateTournaments = async () => {
                     try {
                         const roundNumber = parseInt(gameFile.split("_")[tournament.name.toLowerCase().includes("pace") ? 0 : 1]);
                         const gameData = JSON.parse(gameDataContent);
-                        const packetName = gameData.packets;
+                        const packetName = gameData.packets.replaceAll(/\((\d+)\)/g, "").trim();
                         // console.log(`\tPackets: ${packetName}`);
 
                         // update round dictionary if needed
                         try {
-                            const { id: packetId } = findPacketStatement.get(questionSetEditionId, gameData.packets);
+                            const { id: packetId } = findPacketByNameStatement.get(editionId, packetName);
                             if (packetId) {
                                 if (!roundDictionary[roundNumber]) {
                                     const { lastInsertRowid: roundId } = insertRoundStatement.run(tournamentId, roundNumber, packetId, rounds_to_exclude_from_individual_stats?.find(r => r === roundNumber) ? 1 : 0);
@@ -229,7 +242,7 @@ const migrateTournaments = async () => {
                                     };
                                 } else if (!roundDictionary[roundNumber][packetName]) {
                                     const { lastInsertRowid: roundId } = insertRoundStatement.run(tournamentId, parseInt(`${roundNumber}00`), packetId, rounds_to_exclude_from_individual_stats?.find(r => r === roundNumber) ? 1 : 0);
-                                    console.log(`\tMultiple packets used for round ${roundNumber} of ${name}.`);
+                                    console.log(`\tMultiple packets used for round ${roundNumber} of ${tournamentName}.`);
 
                                     roundDictionary[roundNumber][packetName] = { packetId, roundId };
                                 }
@@ -242,17 +255,17 @@ const migrateTournaments = async () => {
                                         teamDictionary[team.name] = teamId;
                                     }
 
-                                    for (let { name } of team.players) {
-                                        let key = `${team.name}-${name}`;
+                                    for (let { name: playerName } of team.players) {
+                                        let key = `${team.name}-${playerName}`;
 
                                         if (!playerDictionary[key]) {
-                                            let existingPlayers = findPlayerStatement.all(name);
-                                            let playerSlug = slugify(name, slugifyOptions);
+                                            let existingPlayers = findPlayerBySetIdStatement.all(playerName, setId);
+                                            let playerSlug = slugify(playerName, slugifyOptions);
                                             if (existingPlayers.length > 0) {
                                                 playerSlug += `-${existingPlayers.length + 1}`;
-                                                console.log(`Duplicate player name found - ${name}. Using slug ${playerSlug}`);
+                                                console.log(`\tDuplicate player name found - ${playerName}. Using slug ${playerSlug}`);
                                             }
-                                            const { lastInsertRowid: playerId } = insertPlayerStatement.run(teamDictionary[team.name], name, playerSlug);
+                                            const { lastInsertRowid: playerId } = insertPlayerStatement.run(teamDictionary[team.name], playerName, playerSlug, setId);
 
                                             playerDictionary[key] = playerId;
                                         }
@@ -268,13 +281,14 @@ const migrateTournaments = async () => {
                                     let packetId = roundDictionary[roundNumber][packetName].packetId;
                                     let tossupKey = `${packetId}-${question_number}`;
                                     let bonusKey = `${packetId}-${bonus?.question.question_number}`;
+                                    const packet = findPacketByIdStatement.get(editionId, packetId);
 
                                     // update tossup dictionary if needed
                                     if (!tossupDictionary[tossupKey]) {
                                         let tossup = findTossupStatement.get(packetId, question_number);
 
                                         if (!tossup) {
-                                            console.warn(`\tUnable to find tossup ${question_number} in packet id ${packetId} of tournament ID ${tournamentId} (${name}) in game between ${teamOneName} and ${teamTwoName}.`);
+                                            console.warn(`\tUnable to find tossup ${question_number} in packet #${packet.number} (${packet.name}) of tournament #${tournamentId} (${tournamentName}) in round ${roundNumber} game between ${teamOneName} and ${teamTwoName}.`);
                                             return;
                                         }
 
@@ -305,7 +319,7 @@ const migrateTournaments = async () => {
                                     }
                                 });
                             } else {
-                                console.warn(`Couldn't find packet ${gameData.packets} in edition ${questionSetEditionId}.`);
+                                console.warn(`Couldn't find packet ${packetName} in edition ${editionId}.`);
                             }
                         } catch (err) {
                             console.error(`Error occurred while parsing JSON in ${gameFilePath} and writing it to db:`, err);
