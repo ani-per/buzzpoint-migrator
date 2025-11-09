@@ -1,9 +1,9 @@
 {
   "name": "buzzpoint-migrator",
   "scripts": {
-    "initDB": "rm -f database.db && node init-schema.js && node migrate-question-sets.js && node migrate-tournaments.js",
+    "initDB": "(del database.db || rm -f database.db) && node init-schema.js && node migrate-question-sets.js && node migrate-tournaments.js",
     "updateDB": "node migrate-question-sets.js && node migrate-tournaments.js",
-    "deleteDB": "rm database.db"
+    "deleteDB": "(del database.db || rm -f database.db)"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
