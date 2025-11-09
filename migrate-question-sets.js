@@ -81,48 +81,57 @@ const insertTossup = (packetId, questionNumber, question, answer, answer_sanitiz
 }
 
 const insertBonus = (packetId, questionNumber, leadin, answers, answersSlug, parts, values, difficultyModifiers, metadata, author, editor, category, subcategory, subsubcategory, slugDictionary) => {
-    let primaryAnswers = answers.map(a => shortenAnswerline(removeTags(a)));
-    if ((new Set(difficultyModifiers)).size !== 3) {
-        console.warn(`Cannot add bonus ${questionNumber} in packet ${packetId} with answerlines [${primaryAnswers.join(", ")}] because it has duplicate difficulty modifiers: [${difficultyModifiers.join(", ")}].`);
+    if (!difficultyModifiers) {
+        console.warn(`\tDifficulty modifiers missing for bonus ${questionNumber} in packet ID ${packetId} with answerlines:\n\t\t${answers.join("\n\t\t")}`);
         return -1;
-    } else {
-        let questionHash = getHash(`${leadin}${parts.join('')}${answers.join('')}${metadata}`);
-        let { questionId, bonusId } = findBonusStatement.get(questionHash) || {};
+    }
+    try {
+        let primaryAnswers = answers.map(a => shortenAnswerline(removeTags(a)));
+        if ((new Set(difficultyModifiers)).size !== 3) {
+            console.warn(`Duplicate difficulty modifiers in bonus ${questionNumber} in packet ${packetId} with answerlines [${primaryAnswers.join(", ")}]: [${difficultyModifiers.join(", ")}].`);
+            return -1;
+        } else {
+            let questionHash = getHash(`${leadin}${parts.join('')}${answers.join('')}${metadata}`);
+            let { questionId, bonusId } = findBonusStatement.get(questionHash) || {};
 
-        if (!questionId) {
-            if (slugDictionary[answersSlug]) {
-                slugDictionary[answersSlug] += 1;
-                answersSlug = answersSlug + '-' + slugDictionary[answersSlug];
-            } else {
-                slugDictionary[answersSlug] = 1;
+            if (!questionId) {
+                if (slugDictionary[answersSlug]) {
+                    slugDictionary[answersSlug] += 1;
+                    answersSlug = answersSlug + '-' + slugDictionary[answersSlug];
+                } else {
+                    slugDictionary[answersSlug] = 1;
+                }
+
+                questionId = insertQuestionStatement.run(
+                    answersSlug, metadata,
+                    author, editor,
+                    category ? category : null, category ? slugify(category.toLowerCase()) : null,
+                    subcategory ? subcategory : null, subcategory ? slugify(subcategory.toLowerCase()) : null,
+                    subsubcategory ? slugify(subsubcategory.toLowerCase()) : null
+                ).lastInsertRowid;
+                bonusId = insertBonusStatement.run(questionId, leadin, removeTags(leadin)).lastInsertRowid;
+
+                for (let i = 0; i < answers.length; i++) {
+                    insertBonusPartStatement.run(
+                        bonusId, i + 1,
+                        parts[i], removeTags(parts[i]),
+                        answers[i], removeTags(answers[i]),
+                        primaryAnswers[i],
+                        values ? values[i] : null,
+                        difficultyModifiers ? difficultyModifiers[i] : null
+                    );
+                }
+
+                insertBonusHashStatement.run(questionHash, questionId, bonusId);
             }
 
-            questionId = insertQuestionStatement.run(
-                answersSlug, metadata,
-                author, editor,
-                category ? category : null, category ? slugify(category.toLowerCase()) : null,
-                subcategory ? subcategory : null, subcategory ? slugify(subcategory.toLowerCase()) : null,
-                subsubcategory ? slugify(subsubcategory.toLowerCase()) : null
-            ).lastInsertRowid;
-            bonusId = insertBonusStatement.run(questionId, leadin, removeTags(leadin)).lastInsertRowid;
+            insertPacketQuestionStatement.run(packetId, questionNumber, questionId);
 
-            for (let i = 0; i < answers.length; i++) {
-                insertBonusPartStatement.run(
-                    bonusId, i + 1,
-                    parts[i], removeTags(parts[i]),
-                    answers[i], removeTags(answers[i]),
-                    primaryAnswers[i],
-                    values ? values[i] : null,
-                    difficultyModifiers ? difficultyModifiers[i] : null
-                );
-            }
-
-            insertBonusHashStatement.run(questionHash, questionId, bonusId);
+            return bonusId;
         }
-
-        insertPacketQuestionStatement.run(packetId, questionNumber, questionId);
-
-        return bonusId;
+    } catch (err) {
+        console.log(`\tError parsing bonus ${questionNumber} of packet ID ${packetId} with\n\tanswerlines:\n\t${answers.join("\n\t")}`);
+        console.log(err);
     }
 }
 
@@ -227,7 +236,7 @@ const migrateQuestionSets = async () => {
                                                     const answerSlug = slugify(shortenAnswerline(removeTags(answer)).slice(0, 50), slugifyOptions);
 
                                                     if (answerSlug) {
-                                                        insertTossup(
+                                                        let tossupId = insertTossup(
                                                             packetId,
                                                             index + 1,
                                                             question,
@@ -242,7 +251,9 @@ const migrateQuestionSets = async () => {
                                                             subsubcategory,
                                                             slugDictionary
                                                         );
-                                                        numTossups += 1;
+                                                        if (tossupId > 0) {
+                                                            numTossups += 1;
+                                                        }
                                                     } else {
                                                         console.log(`\tError in saving data for tossup ${index + 1}: Couldn't process answer slug.`);
                                                     }
@@ -258,7 +269,7 @@ const migrateQuestionSets = async () => {
                                                         const answersSlug = slugify(answers?.map(a => shortenAnswerline(removeTags(a)).slice(0, 25)).join(" "), slugifyOptions)
 
                                                         if (answersSlug) {
-                                                            insertBonus(
+                                                            let bonusId = insertBonus(
                                                                 packetId,
                                                                 index + 1,
                                                                 leadin,
@@ -275,7 +286,9 @@ const migrateQuestionSets = async () => {
                                                                 subsubcategory,
                                                                 slugDictionary
                                                             );
-                                                            numBonuses += 1;
+                                                            if (bonusId > 0) {
+                                                                numBonuses += 1;
+                                                            }
                                                         } else {
                                                             console.log(`\tError in saving data for bonus ${index + 1}: Couldn't process answer slug.`);
                                                         }
