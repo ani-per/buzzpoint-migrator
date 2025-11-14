@@ -6,3 +6,9 @@ exports.slugifyOptions = {
     lower: true,
     strict: true
 }
+exports.toTitleCase = (s) => (
+    s.toLowerCase().split(" ").map(function (word) {
+        if (word === "") return "";
+        return word.charAt(0).toUpperCase() + word.slice(1);
+    }).join(" ")
+);

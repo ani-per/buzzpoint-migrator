@@ -7,7 +7,7 @@ const slugify = require('slugify');
 const { existsSync } = require('fs');
 const fs = require('fs/promises');
 const path = require('path');
-const { slugifyOptions } = require('./utils');
+const { slugifyOptions, toTitleCase } = require('./utils');
 
 require('dotenv').config();
 
@@ -289,7 +289,7 @@ const migrateTournaments = async () => {
                                             let tossup = findTossupStatement.get(packetId, question_number);
 
                                             if (!tossup) {
-                                                console.warn(`\tUnable to find tossup ${question_number} in packet #${packet.number} (${packet.name}) of tournament #${tournamentId} (${tournamentName}) in round ${roundNumber} game between ${teamOneName} and ${teamTwoName}.`);
+                                                console.warn(`\tUnable to find tossup ${question_number} in packet #${packet.number} (${packet.descriptor}) of tournament #${tournamentId} (${tournamentName}) in round ${roundNumber} game between ${teamOneName} and ${teamTwoName}.`);
                                                 return;
                                             }
 

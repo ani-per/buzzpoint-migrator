@@ -2,7 +2,7 @@ const Database = require('better-sqlite3');
 
 // Create or open the SQLite database file
 const db = new Database('database.db');
-const { shortenAnswerline, removeTags, slugifyOptions } = require('./utils');
+const { shortenAnswerline, removeTags, slugifyOptions, toTitleCase } = require('./utils');
 const slugify = require('slugify');
 
 const { existsSync } = require('fs');
@@ -22,7 +22,7 @@ const overWrite = process.argv.find(a => a === overWriteFlag);
 
 const insertQuestionSetStatement = db.prepare('INSERT INTO question_set (name, slug, difficulty, format, bonuses) VALUES (?, ?, ?, ?, ?)');
 const insertQuestionSetEditionStatement = db.prepare('INSERT INTO question_set_edition (question_set_id, name, slug, date) VALUES (?, ?, ?, ?)');
-const insertPacketStatement = db.prepare('INSERT INTO packet (question_set_edition_id, name, number) VALUES (?, ?, ?)');
+const insertPacketStatement = db.prepare('INSERT INTO packet (question_set_edition_id, name, descriptor, number) VALUES (?, ?, ?, ?)');
 const insertPacketQuestionStatement = db.prepare('INSERT INTO packet_question (packet_id, question_number, question_id) VALUES (?, ?, ?)');
 const insertQuestionStatement = db.prepare('INSERT INTO question (slug, metadata, author, editor, category, category_slug, subcategory, subcategory_slug, subsubcategory) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
 const insertTossupStatement = db.prepare('INSERT INTO tossup (question_id, question, answer, answer_sanitized, answer_primary) VALUES (?, ?, ?, ?, ?)');
@@ -45,6 +45,33 @@ const findBonusStatement = db.prepare(`
     FROM    bonus_hash
     WHERE   hash = ?
 `);
+
+const packetWords = ["packet", "round"];
+
+function parsePacketMetadata(packetFileName, index) {
+    let packetNumber = index;
+    let packetInteger = Math.max.apply(null, packetFileName.match(/\d+/g));
+    let packetDescriptor = "";
+    let cleanedPacketFileName = packetFileName.toLowerCase();
+    let cleanedPacketFileNameParts = cleanedPacketFileName.split(/[-–—_,.:|\s+]/);
+    if (packetWords.some(s => cleanedPacketFileName.includes(s))) {
+        let packetWordIndex = packetWords.findIndex(s => cleanedPacketFileName.includes(s));
+        packetDescriptor = toTitleCase(cleanedPacketFileNameParts[packetWordIndex + 1]);
+        let packetIdentifierNumber = Math.max.apply(null, packetDescriptor.match(/\d+/g))
+        if (packetIdentifierNumber > 0) {
+            packetNumber = packetIdentifierNumber;
+        }
+    } else if (packetInteger > 0) {
+        packetNumber = packetInteger;
+        packetDescriptor = packetInteger.toString();
+    } else if (index) {
+        packetDescriptor = index.toString();
+    } else {
+        console.log(`\tUnable to detect packet number or identifier for ${packetFileName}. Setting number to ${index} and identifier to ${packetFileName}.`);
+        packetDescriptor = packetFileName;
+    }
+    return { descriptor: packetDescriptor, number: packetNumber }
+}
 
 const getHash = (questionText) => {
     return crypto.createHash('md5').update(questionText).digest('hex');
@@ -217,14 +244,13 @@ const migrateQuestionSets = async () => {
                                     for (const [i, packetFile] of packetFiles.entries()) {
                                         const gameFilePath = path.join(packetsFilePath, packetFile);
                                         const packetName = packetFile.replace(".json", "");
-                                        const packetNumberRaw = Math.max.apply(null, packetFile.match(/\d+/g));
-                                        const packetNumber = packetNumberRaw > 0 ? packetNumberRaw : (i + 1);
+                                        let { descriptor: packetDescriptor, number: packetNumber } = parsePacketMetadata(packetName, i + 1);
 
-                                        console.log(`Set: ${setName} | Edition: ${editionName} | Packet #${packetNumber} (${packetFile})`);
+                                        console.log(`Set: ${setName} | Edition: ${editionName} | Packet #${packetNumber} | ID: ${packetDescriptor} | Filename: ${packetFile}`);
                                         try {
                                             const packetDataContent = await fs.readFile(gameFilePath);
                                             const packetData = JSON.parse(packetDataContent);
-                                            const { lastInsertRowid: packetId } = insertPacketStatement.run(questionSetEditionId, packetName, packetNumber);
+                                            const { lastInsertRowid: packetId } = insertPacketStatement.run(questionSetEditionId, packetName, packetDescriptor, packetNumber);
 
                                             let numTossups = 0;
                                             let numBonuses = 0;

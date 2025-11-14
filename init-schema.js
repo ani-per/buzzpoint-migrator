@@ -33,6 +33,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     question_set_edition_id INTEGER,
     name TEXT,
+    descriptor TEXT,
     number INTEGER,
     FOREIGN KEY (question_set_edition_id) REFERENCES question_set_edition (id) ON DELETE CASCADE
   )
