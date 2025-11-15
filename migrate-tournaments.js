@@ -7,7 +7,7 @@ const slugify = require('slugify');
 const { existsSync } = require('fs');
 const fs = require('fs/promises');
 const path = require('path');
-const { slugifyOptions, toTitleCase } = require('./utils');
+const { slugifyOptions, filterPaths, filterFiles } = require('./utils');
 
 require('dotenv').config();
 
@@ -64,13 +64,11 @@ const findPlayerBySetIdStatement = db.prepare(`
 
 const migrateTournaments = async () => {
     try {
-        const subFolders = (await fs.readdir(tournamentsPath, { withFileTypes: true }))
-            .filter(f => !(["DS_Store", "zip"].map(s => f.name.endsWith(`${s}`)).some(f => f)))
-            .map(f => f.name);
+        const subFolders = filterPaths(await fs.readdir(tournamentsPath, { withFileTypes: true }));
 
         for (const subFolder of subFolders) {
             const subFolderPath = path.join(tournamentsPath, subFolder);
-            const indexPath = path.join(subFolderPath, 'index.json');
+            const indexPath = path.join(subFolderPath, "index.json");
 
             if (!existsSync(indexPath)) {
                 console.log(`Skipping ${subFolder} as 'index.json' file not found.`);
@@ -78,7 +76,7 @@ const migrateTournaments = async () => {
             }
 
             try {
-                const tournamentData = await fs.readFile(indexPath, 'utf8');
+                const tournamentData = await fs.readFile(indexPath, "utf8");
                 const tournament = JSON.parse(tournamentData);
                 const gamesFilePath = path.join(subFolderPath, gamesFolderName);
                 const { name: tournamentName, slug: tournamentSlug, set, edition, location, level, start_date, end_date, rounds_to_exclude_from_individual_stats, rounds } = tournament;
@@ -109,11 +107,11 @@ const migrateTournaments = async () => {
                         const gameDictionary = {};
                         const buzzesFilePath = path.join(subFolderPath, buzzesFileName);
                         const bonusesFilePath = path.join(subFolderPath, bonusesFileName)
-                        const buzzesContent = await fs.readFile(buzzesFilePath, 'utf8');
-                        const buzzes = buzzesContent.split('\n').slice(1);
+                        const buzzesContent = await fs.readFile(buzzesFilePath, "utf8");
+                        const buzzes = buzzesContent.split("\n").slice(1);
 
                         for (let buzz of buzzes) {
-                            const [rawGameId, rawRound, rawQuestionNumber, team, player, opponent, _, __, ___, rawBuzzPosition, rawValue] = buzz.split(',');
+                            const [rawGameId, rawRound, rawQuestionNumber, team, player, opponent, _, __, ___, rawBuzzPosition, rawValue] = buzz.split(",");
                             const gameId = parseInt(rawGameId);
                             const round = parseInt(rawRound);
                             const questionNumber = parseInt(rawQuestionNumber);
@@ -183,12 +181,12 @@ const migrateTournaments = async () => {
                             insertBuzzStatement.run(playerDictionary[playerKey], gameDictionary[gameId], tossupDictionary[tossupKey], buzzPosition, value);
                         }
 
-                        const bonusesContent = await fs.readFile(bonusesFilePath, 'utf8');
+                        const bonusesContent = await fs.readFile(bonusesFilePath, "utf8");
 
-                        const bonuses = bonusesContent.split('\n').slice(1);
+                        const bonuses = bonusesContent.split("\n").slice(1);
 
                         for (let bonusPartDirect of bonuses) {
-                            const [rawGameId, rawRound, , rawBonus, team, , , , part, , , rawValue] = bonusPartDirect.split(',');
+                            const [rawGameId, rawRound, , rawBonus, team, , , , part, , , rawValue] = bonusPartDirect.split(",");
                             const gameId = parseInt(rawGameId);
                             const round = parseInt(rawRound);
                             const value = parseInt(rawValue);
@@ -196,7 +194,7 @@ const migrateTournaments = async () => {
                             const packetId = roundDictionary[round].packetId;
                             const bonusKey = `${packetId}-${bonus}`;
                             const teamId = teamDictionary[team];
-                            const numericPart = parseInt(part.replace(/\D/g, ''));
+                            const numericPart = parseInt(part.replace(/\D/g, ""));
 
                             if (!bonusDictionary[bonusKey]) {
                                 let bonusResults = findBonusPartsStatement.all(packetId, bonus);
@@ -214,13 +212,11 @@ const migrateTournaments = async () => {
                         continue;
                     }
 
-                    const gameFiles = (await fs.readdir(gamesFilePath, { withFileTypes: true }))
-                        .filter(f => !(["DS_Store", "zip"].map(s => f.name.endsWith(`${s}`)).some(f => f)))
-                        .map(f => f.name);
+                    const gameFiles = filterFiles(await fs.readdir(gamesFilePath, { withFileTypes: true, recursive: true }), "qbj");
 
                     for (const gameFile of gameFiles) {
                         const gameFilePath = path.join(gamesFilePath, gameFile);
-                        const gameDataContent = await fs.readFile(gameFilePath, 'utf8');
+                        const gameDataContent = await fs.readFile(gameFilePath, "utf8");
 
                         try {
                             const roundNumber = parseInt(gameFile.split("_")[tournament.name.toLowerCase().includes("pace") ? 0 : 1]);

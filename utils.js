@@ -12,3 +12,9 @@ exports.toTitleCase = (s) => (
         return word.charAt(0).toUpperCase() + word.slice(1);
     }).join(" ")
 );
+exports.filterPaths = (dir) => (
+    dir.filter(f => !(["DS_Store", "zip"].map(s => f.name.endsWith(`.${s}`)).some(f => f))).map(f => f.name)
+);
+exports.filterFiles = (dir, extension) => (
+    dir.filter(f => f.name.endsWith(`.${extension}`)).map(f => f.name)
+);

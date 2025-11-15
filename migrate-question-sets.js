@@ -2,7 +2,7 @@ const Database = require('better-sqlite3');
 
 // Create or open the SQLite database file
 const db = new Database('database.db');
-const { shortenAnswerline, removeTags, slugifyOptions, toTitleCase } = require('./utils');
+const { shortenAnswerline, removeTags, slugifyOptions, toTitleCase, filterPaths, filterFiles } = require('./utils');
 const slugify = require('slugify');
 
 const { existsSync } = require('fs');
@@ -164,9 +164,7 @@ const insertBonus = (packetId, questionNumber, leadin, answers, answersSlug, par
 
 const migrateQuestionSets = async () => {
     try {
-        const subFolders = (await fs.readdir(questionSetsPath, { withFileTypes: true }))
-                    .filter(f => !(["DS_Store", "zip"].map(s => f.name.endsWith(`${s}`)).some(f => f)))
-                    .map(f => f.name);
+        const subFolders = filterPaths(await fs.readdir(questionSetsPath, { withFileTypes: true }));
 
         for (const subFolder of subFolders) {
             const subFolderPath = path.join(questionSetsPath, subFolder);
@@ -197,9 +195,7 @@ const migrateQuestionSets = async () => {
                 }
 
                 try {
-                    const editionsFolders = (await fs.readdir(editionsPath, { withFileTypes: true }))
-                        .filter(f => !(["DS_Store", "zip"].map(s => f.name.endsWith(`${s}`)).some(f => f)))
-                        .map(f => f.name);
+                    const editionsFolders = filterPaths(await fs.readdir(editionsPath, { withFileTypes: true }));
 
                     for (const editionFolder of editionsFolders) {
                         const subFolderPath = path.join(editionsPath, editionFolder);
@@ -211,7 +207,7 @@ const migrateQuestionSets = async () => {
                         }
 
                         try {
-                            const editionData = await fs.readFile(indexPath, 'utf8');
+                            const editionData = await fs.readFile(indexPath, "utf8");
 
                             try {
                                 const edition = JSON.parse(editionData);
@@ -237,9 +233,7 @@ const migrateQuestionSets = async () => {
                                 questionSetEditionId = insertQuestionSetEditionStatement.run(questionSetId, editionName, editionSlug, date).lastInsertRowid;
 
                                 try {
-                                    const packetFiles = (await fs.readdir(packetsFilePath, { withFileTypes: true }))
-                                        .filter(f => !(["DS_Store", "zip"].map(s => f.name.endsWith(`${s}`)).some(f => f)))
-                                        .map(f => f.name);
+                                    const packetFiles = filterFiles(await fs.readdir(packetsFilePath, { withFileTypes: true, recursive: true }), "json");
 
                                     for (const [i, packetFile] of packetFiles.entries()) {
                                         const gameFilePath = path.join(packetsFilePath, packetFile);
