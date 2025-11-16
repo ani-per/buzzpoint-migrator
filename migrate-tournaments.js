@@ -61,6 +61,16 @@ const findPlayerBySetIdStatement = db.prepare(`
     FROM player
     WHERE name = ? and question_set_id = ?
 `);
+const findTeamByIdStatement = db.prepare(`
+    SELECT *
+    FROM team
+    WHERE id = ?
+`);
+const findGameByRoundAndTeamsStatement = db.prepare(`
+    SELECT id
+    FROM game
+    WHERE round_id = ? and team_one_id = ? AND team_two_id = ?
+`);
 
 const migrateTournaments = async () => {
     try {
@@ -153,8 +163,12 @@ const migrateTournaments = async () => {
                                 let playerSlug = slugify(player, slugifyOptions);
                                 let existingPlayers = findPlayerBySetIdStatement.all(player, setId);
                                 if (existingPlayers.length > 0) {
+                                    let playerTeams = [...new Set(existingPlayers.map(p => {
+                                        let { name: teamName } = findTeamByIdStatement.get(p.team_id);
+                                        return teamName;
+                                    }))];
                                     playerSlug += `-${existingPlayers.length + 1}`;
-                                    console.log(`\tDuplicate player name found - ${player}. Using slug ${playerSlug}`);
+                                    console.log(`\tDuplicate player name found - ${playerName} already exists on these teams: ${playerTeams.join(", ")}. Using slug ${playerSlug} for the player on ${teamName}.`);
                                 }
                                 const { lastInsertRowid: playerId } = insertPlayerStatement.run(teamDictionary[team], player, playerSlug, setId);
 
@@ -230,6 +244,19 @@ const migrateTournaments = async () => {
                             let { descriptor: packetDescriptor, number: _ } = parsePacketMetadata(packetName, 0);
                             // console.log(`\tPackets: ${packetDescriptor} (${packetName})`);
 
+                            const teamOneName = cleanName(gameData.match_teams[0].team.name);
+                            const teamTwoName = cleanName(gameData.match_teams[1].team.name);
+
+                            if (roundDictionary[roundNumber] && roundDictionary[roundNumber][packetName]) {
+                                const gameRoundId = roundDictionary[roundNumber][packetName].roundId;
+                                let existingGameCheck = findGameByRoundAndTeamsStatement.all(gameRoundId, teamDictionary[teamOneName], teamDictionary[teamTwoName]);
+
+                                if (existingGameCheck.length > 0) {
+                                    console.log(`\tSkipping duplicate file for game between ${teamOneName} and ${teamTwoName} in round ${roundNumber}.`);
+                                    continue;
+                                }
+                            }
+
                             // update round dictionary if needed
                             try {
                                 const { id: packetId } = findPacketByNameStatement.get(editionId, packetName);
@@ -266,8 +293,12 @@ const migrateTournaments = async () => {
                                             let existingPlayers = findPlayerBySetIdStatement.all(playerName, setId);
                                             let playerSlug = slugify(playerName, slugifyOptions);
                                             if (existingPlayers.length > 0) {
+                                                let playerTeams = [...new Set(existingPlayers.map(p => {
+                                                    let { name: teamName } = findTeamByIdStatement.get(p.team_id);
+                                                    return teamName;
+                                                }))];
                                                 playerSlug += `-${existingPlayers.length + 1}`;
-                                                console.log(`\tDuplicate player name found - ${playerName}. Using slug ${playerSlug}`);
+                                                console.log(`\tDuplicate player name found - ${playerName} already exists on these teams: ${playerTeams.join(", ")}. Using slug ${playerSlug} for the player on ${teamName}.`);
                                             }
                                             const { lastInsertRowid: playerId } = insertPlayerStatement.run(teamDictionary[teamName], playerName, playerSlug, setId);
 
@@ -276,8 +307,6 @@ const migrateTournaments = async () => {
                                     }
                                 }
 
-                                const teamOneName = cleanName(gameData.match_teams[0].team.name);
-                                const teamTwoName = cleanName(gameData.match_teams[1].team.name);
                                 const { lastInsertRowid: gameId } = insertGameStatement.run(roundDictionary[roundNumber][packetName].roundId, gameData.tossups_read, teamDictionary[teamOneName], teamDictionary[teamTwoName]);
 
                                 // insert buzzes and bonus data
