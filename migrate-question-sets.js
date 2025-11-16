@@ -2,7 +2,7 @@ const Database = require('better-sqlite3');
 
 // Create or open the SQLite database file
 const db = new Database('database.db');
-const { shortenAnswerline, removeTags, slugifyOptions, toTitleCase, filterPaths, filterFiles } = require('./utils');
+const { shortenAnswerline, removeTags, slugifyOptions, parsePacketMetadata, filterPaths, filterFiles, cleanName } = require('./utils');
 const slugify = require('slugify');
 
 const { existsSync } = require('fs');
@@ -45,33 +45,6 @@ const findBonusStatement = db.prepare(`
     FROM    bonus_hash
     WHERE   hash = ?
 `);
-
-const packetWords = ["packet", "round"];
-
-function parsePacketMetadata(packetFileName, index) {
-    let packetNumber = index;
-    let packetInteger = Math.max.apply(null, packetFileName.match(/\d+/g));
-    let packetDescriptor = "";
-    let cleanedPacketFileName = packetFileName.toLowerCase();
-    let cleanedPacketFileNameParts = cleanedPacketFileName.split(/[-–—_,.:|\s+]/);
-    if (packetWords.some(s => cleanedPacketFileName.includes(s))) {
-        let packetWordIndex = packetWords.findIndex(s => cleanedPacketFileName.includes(s));
-        packetDescriptor = toTitleCase(cleanedPacketFileNameParts[packetWordIndex + 1]);
-        let packetIdentifierNumber = Math.max.apply(null, packetDescriptor.match(/\d+/g))
-        if (packetIdentifierNumber > 0) {
-            packetNumber = packetIdentifierNumber;
-        }
-    } else if (packetInteger > 0) {
-        packetNumber = packetInteger;
-        packetDescriptor = packetInteger.toString();
-    } else if (index) {
-        packetDescriptor = index.toString();
-    } else {
-        console.log(`\tUnable to detect packet number or identifier for ${packetFileName}. Setting number to ${index} and identifier to ${packetFileName}.`);
-        packetDescriptor = packetFileName;
-    }
-    return { descriptor: packetDescriptor, number: packetNumber }
-}
 
 const getHash = (questionText) => {
     return crypto.createHash('md5').update(questionText).digest('hex');
@@ -233,16 +206,17 @@ const migrateQuestionSets = async () => {
                                 questionSetEditionId = insertQuestionSetEditionStatement.run(questionSetId, editionName, editionSlug, date).lastInsertRowid;
 
                                 try {
-                                    const packetFiles = filterFiles(await fs.readdir(packetsFilePath, { withFileTypes: true, recursive: true }), "json");
+                                    const packetFileDirents = filterFiles(await fs.readdir(packetsFilePath, { withFileTypes: true, recursive: true }), "json");
 
-                                    for (const [i, packetFile] of packetFiles.entries()) {
-                                        const gameFilePath = path.join(packetsFilePath, packetFile);
+                                    for (const [i, packetFileDirent] of packetFileDirents.entries()) {
+                                        const packetFilePath = path.join(packetFileDirent.parentPath, packetFileDirent.name);
+                                        const packetFile = packetFileDirent.name;
                                         const packetName = packetFile.replace(".json", "");
                                         let { descriptor: packetDescriptor, number: packetNumber } = parsePacketMetadata(packetName, i + 1);
 
                                         console.log(`Set: ${setName} | Edition: ${editionName} | Packet #${packetNumber} | ID: ${packetDescriptor} | Filename: ${packetFile}`);
                                         try {
-                                            const packetDataContent = await fs.readFile(gameFilePath);
+                                            const packetDataContent = await fs.readFile(packetFilePath);
                                             const packetData = JSON.parse(packetDataContent);
                                             const { lastInsertRowid: packetId } = insertPacketStatement.run(questionSetEditionId, packetName, packetDescriptor, packetNumber);
 
@@ -320,7 +294,7 @@ const migrateQuestionSets = async () => {
 
                                             console.log(`\t${numTossups} tossups` + (bonuses ? `, ${numBonuses} bonuses` : ""));
                                         } catch (err) {
-                                            console.error(`Error processing ${gameFilePath}: `, err);
+                                            console.error(`Error processing ${packetFilePath}: `, err);
                                         }
                                     }
                                 } catch (err) {

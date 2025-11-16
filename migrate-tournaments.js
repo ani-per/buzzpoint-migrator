@@ -7,7 +7,7 @@ const slugify = require('slugify');
 const { existsSync } = require('fs');
 const fs = require('fs/promises');
 const path = require('path');
-const { slugifyOptions, filterPaths, filterFiles } = require('./utils');
+const { slugifyOptions, parsePacketMetadata, filterPaths, filterFiles, cleanName } = require('./utils');
 
 require('dotenv').config();
 
@@ -112,6 +112,9 @@ const migrateTournaments = async () => {
 
                         for (let buzz of buzzes) {
                             const [rawGameId, rawRound, rawQuestionNumber, team, player, opponent, _, __, ___, rawBuzzPosition, rawValue] = buzz.split(",");
+                            team = cleanName(team);
+                            player = cleanName(player);
+                            opponent = cleanName(opponent);
                             const gameId = parseInt(rawGameId);
                             const round = parseInt(rawRound);
                             const questionNumber = parseInt(rawQuestionNumber);
@@ -187,6 +190,7 @@ const migrateTournaments = async () => {
 
                         for (let bonusPartDirect of bonuses) {
                             const [rawGameId, rawRound, , rawBonus, team, , , , part, , , rawValue] = bonusPartDirect.split(",");
+                            team = cleanName(team);
                             const gameId = parseInt(rawGameId);
                             const round = parseInt(rawRound);
                             const value = parseInt(rawValue);
@@ -212,125 +216,125 @@ const migrateTournaments = async () => {
                         continue;
                     }
 
-                    const gameFiles = filterFiles(await fs.readdir(gamesFilePath, { withFileTypes: true, recursive: true }), "qbj");
+                    const gameFileDirents = filterFiles(await fs.readdir(gamesFilePath, { withFileTypes: true, recursive: true }), "qbj");
 
-                    for (const gameFile of gameFiles) {
-                        const gameFilePath = path.join(gamesFilePath, gameFile);
+                    for (const gameFileDirent of gameFileDirents) {
+                        const gameFilePath = path.join(gameFileDirent.parentPath, gameFileDirent.name);
+                        const gameFile = gameFileDirent.name;
                         const gameDataContent = await fs.readFile(gameFilePath, "utf8");
 
                         try {
                             const roundNumber = parseInt(gameFile.split("_")[tournament.name.toLowerCase().includes("pace") ? 0 : 1]);
                             const gameData = JSON.parse(gameDataContent);
                             const packetName = gameData.packets.replaceAll(/\((\d+)\)/g, "").trim();
-                            // console.log(`\tPackets: ${packetName}`);
+                            let { descriptor: packetDescriptor, number: _ } = parsePacketMetadata(packetName, 0);
+                            // console.log(`\tPackets: ${packetDescriptor} (${packetName})`);
 
                             // update round dictionary if needed
                             try {
                                 const { id: packetId } = findPacketByNameStatement.get(editionId, packetName);
-                                if (packetId) {
-                                    if (!roundDictionary[roundNumber]) {
-                                        const { lastInsertRowid: roundId } = insertRoundStatement.run(tournamentId, roundNumber, packetId, rounds_to_exclude_from_individual_stats?.find(r => r === roundNumber) ? 1 : 0);
+                                if (!roundDictionary[roundNumber]) {
+                                    const { lastInsertRowid: roundId } = insertRoundStatement.run(tournamentId, roundNumber, packetId, rounds_to_exclude_from_individual_stats?.find(r => r === roundNumber) ? 1 : 0);
 
-                                        roundDictionary[roundNumber] = {
-                                            [packetName]: {
-                                                packetId,
-                                                roundId
-                                            }
-                                        };
-                                    } else if (!roundDictionary[roundNumber][packetName]) {
-                                        const { lastInsertRowid: roundId } = insertRoundStatement.run(tournamentId, parseInt(`${roundNumber}00`), packetId, rounds_to_exclude_from_individual_stats?.find(r => r === roundNumber) ? 1 : 0);
-                                        console.log(`\tMultiple packets used for round ${roundNumber} of ${tournamentName}.`);
-
-                                        roundDictionary[roundNumber][packetName] = { packetId, roundId };
-                                    }
-
-                                    // update team and player dictionaries if needed
-                                    for (let { team } of gameData.match_teams) {
-                                        if (!teamDictionary[team.name]) {
-                                            const { lastInsertRowid: teamId } = insertTeamStatement.run(tournamentId, team.name, slugify(team.name, slugifyOptions));
-
-                                            teamDictionary[team.name] = teamId;
+                                    roundDictionary[roundNumber] = {
+                                        [packetName]: {
+                                            packetId,
+                                            roundId
                                         }
+                                    };
+                                } else if (!roundDictionary[roundNumber][packetName]) {
+                                    const { lastInsertRowid: roundId } = insertRoundStatement.run(tournamentId, parseInt(`${roundNumber}00`), packetId, rounds_to_exclude_from_individual_stats?.find(r => r === roundNumber) ? 1 : 0);
+                                    console.log(`\tMultiple packets used for round ${roundNumber} of ${tournamentName}.`);
 
-                                        for (let { name: playerName } of team.players) {
-                                            let key = `${team.name}-${playerName}`;
-
-                                            if (!playerDictionary[key]) {
-                                                let existingPlayers = findPlayerBySetIdStatement.all(playerName, setId);
-                                                let playerSlug = slugify(playerName, slugifyOptions);
-                                                if (existingPlayers.length > 0) {
-                                                    playerSlug += `-${existingPlayers.length + 1}`;
-                                                    console.log(`\tDuplicate player name found - ${playerName}. Using slug ${playerSlug}`);
-                                                }
-                                                const { lastInsertRowid: playerId } = insertPlayerStatement.run(teamDictionary[team.name], playerName, playerSlug, setId);
-
-                                                playerDictionary[key] = playerId;
-                                            }
-                                        }
-                                    }
-
-                                    const teamOneName = gameData.match_teams[0].team.name;
-                                    const teamTwoName = gameData.match_teams[1].team.name;
-                                    const { lastInsertRowid: gameId } = insertGameStatement.run(roundDictionary[roundNumber][packetName].roundId, gameData.tossups_read, teamDictionary[teamOneName], teamDictionary[teamTwoName]);
-
-                                    // insert buzzes and bonus data
-                                    gameData.match_questions.forEach(({ buzzes, tossup_question: { question_number }, bonus }) => {
-                                        let packetId = roundDictionary[roundNumber][packetName].packetId;
-                                        let tossupKey = `${packetId}-${question_number}`;
-                                        let bonusKey = `${packetId}-${bonus?.question.question_number}`;
-                                        const packet = findPacketByIdStatement.get(editionId, packetId);
-
-                                        // update tossup dictionary if needed
-                                        if (!tossupDictionary[tossupKey]) {
-                                            let tossup = findTossupStatement.get(packetId, question_number);
-
-                                            if (!tossup) {
-                                                console.warn(`\tUnable to find tossup ${question_number} in packet #${packet.number} (${packet.descriptor}) of tournament #${tournamentId} (${tournamentName}) in round ${roundNumber} game between ${teamOneName} and ${teamTwoName}.`);
-                                                return;
-                                            }
-
-                                            tossupDictionary[tossupKey] = tossup.id;
-                                        }
-
-                                        // update bonus dictionary if needed
-                                        if (bonus && !bonusDictionary[bonusKey]) {
-                                            let bonusResults = findBonusPartsStatement.all(packetId, bonus.question.question_number);
-                                            bonusDictionary[bonusKey] = bonusResults;
-                                        }
-
-                                        for (let { buzz_position, player, team, result } of buzzes) {
-                                            let playerId = playerDictionary[`${team.name}-${player.name}`];
-
-                                            insertBuzzStatement.run(playerId, gameId, tossupDictionary[tossupKey], buzz_position.word_index, result.value);
-                                        }
-
-                                        if (bonus) {
-                                            let teamId = teamDictionary[buzzes.find(({ result }) => result.value > 0).team.name];
-                                            let bonusParts = bonusDictionary[bonusKey];
-
-                                            if (bonusParts.length) {
-                                                bonus.parts.forEach((part, index) => {
-                                                    insertBonusPartDirectStatement.run(teamId, gameId, bonusParts.find(p => p.part_number === index + 1).id, part.controlled_points);
-                                                });
-                                            }
-                                        }
-                                    });
-                                } else {
-                                    console.warn(`Couldn't find packet ${packetName} in edition ${editionId}.`);
+                                    roundDictionary[roundNumber][packetName] = { packetId, roundId };
                                 }
+
+                                // update team and player dictionaries if needed
+                                for (let { team } of gameData.match_teams) {
+                                    teamName = cleanName(team.name);
+                                    if (!teamDictionary[teamName]) {
+                                        const { lastInsertRowid: teamId } = insertTeamStatement.run(tournamentId, teamName, slugify(teamName, slugifyOptions));
+
+                                        teamDictionary[teamName] = teamId;
+                                    }
+
+                                    for (let { name: playerName } of team.players) {
+                                        playerName = cleanName(playerName);
+                                        let key = `${teamName}-${playerName}`;
+
+                                        if (!playerDictionary[key]) {
+                                            let existingPlayers = findPlayerBySetIdStatement.all(playerName, setId);
+                                            let playerSlug = slugify(playerName, slugifyOptions);
+                                            if (existingPlayers.length > 0) {
+                                                playerSlug += `-${existingPlayers.length + 1}`;
+                                                console.log(`\tDuplicate player name found - ${playerName}. Using slug ${playerSlug}`);
+                                            }
+                                            const { lastInsertRowid: playerId } = insertPlayerStatement.run(teamDictionary[teamName], playerName, playerSlug, setId);
+
+                                            playerDictionary[key] = playerId;
+                                        }
+                                    }
+                                }
+
+                                const teamOneName = cleanName(gameData.match_teams[0].team.name);
+                                const teamTwoName = cleanName(gameData.match_teams[1].team.name);
+                                const { lastInsertRowid: gameId } = insertGameStatement.run(roundDictionary[roundNumber][packetName].roundId, gameData.tossups_read, teamDictionary[teamOneName], teamDictionary[teamTwoName]);
+
+                                // insert buzzes and bonus data
+                                gameData.match_questions.forEach(({ buzzes, tossup_question: { question_number }, bonus }) => {
+                                    let packetId = roundDictionary[roundNumber][packetName].packetId;
+                                    let tossupKey = `${packetId}-${question_number}`;
+                                    let bonusKey = `${packetId}-${bonus?.question.question_number}`;
+                                    const packet = findPacketByIdStatement.get(editionId, packetId);
+
+                                    // update tossup dictionary if needed
+                                    if (!tossupDictionary[tossupKey]) {
+                                        let tossup = findTossupStatement.get(packetId, question_number);
+
+                                        if (!tossup) {
+                                            console.warn(`\tUnable to find tossup ${question_number} in packet #${packet.number} (${packet.descriptor}) of tournament #${tournamentId} (${tournamentName}) in round ${roundNumber} game between ${teamOneName} and ${teamTwoName}.`);
+                                            return;
+                                        }
+
+                                        tossupDictionary[tossupKey] = tossup.id;
+                                    }
+
+                                    // update bonus dictionary if needed
+                                    if (bonus && !bonusDictionary[bonusKey]) {
+                                        let bonusResults = findBonusPartsStatement.all(packetId, bonus.question.question_number);
+                                        bonusDictionary[bonusKey] = bonusResults;
+                                    }
+
+                                    for (let { buzz_position, player, team, result } of buzzes) {
+                                        let playerId = playerDictionary[`${cleanName(team.name)}-${cleanName(player.name)}`];
+
+                                        insertBuzzStatement.run(playerId, gameId, tossupDictionary[tossupKey], buzz_position.word_index, result.value);
+                                    }
+
+                                    if (bonus) {
+                                        let teamId = teamDictionary[cleanName(buzzes.find(({ result }) => result.value > 0).team.name)];
+                                        let bonusParts = bonusDictionary[bonusKey];
+
+                                        if (bonusParts.length) {
+                                            bonus.parts.forEach((part, index) => {
+                                                insertBonusPartDirectStatement.run(teamId, gameId, bonusParts.find(p => p.part_number === index + 1).id, part.controlled_points);
+                                            });
+                                        }
+                                    }
+                                });
                             } catch (err) {
-                                console.error(`Error occurred while parsing JSON in ${gameFilePath} and writing it to db:`, err);
+                                console.warn(`\tCouldn't find packet ${packetDescriptor} in edition ${edition} for game ${gameFile.replaceAll(".qbj", "")}.`);
+                                console.log(err);
                             }
                         } catch (err) {
-                            console.error(`Error occurred while parsing JSON in ${gameFilePath} and writing it to db:`, err);
+                            console.error(`Error occurred while parsing JSON in ${gameFilePath} and writing it to db (2):`, err);
                         }
                     }
                 } catch (err) {
                     console.log(`\tCouldn't find edition ${edition} of question set ${set} for tournament ${subFolder}.`);
                 }
             } catch (err) {
-                console.error(`Error reading ${indexPath}:`, err);
-
+                console.error(`Error reading ${indexPath}: `, err);
             }
         }
     } catch (err) {
