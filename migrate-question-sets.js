@@ -2,13 +2,13 @@ const Database = require('better-sqlite3');
 
 // Create or open the SQLite database file
 const db = new Database('database.db');
-const { shortenAnswerline, removeTags, slugifyOptions } = require('./utils');
+const { shortenAnswerline, removeTags, slugifyOptions, parsePacketMetadata, filterPaths, filterFiles, cleanName } = require('./utils');
 const slugify = require('slugify');
 
 const { existsSync } = require('fs');
 const fs = require('fs/promises');
 const path = require('path');
-const { parseMetadata } = require('./metadata-utils');
+const { parseMetadata, formatTypes, metadataTypes } = require('./metadata-utils');
 const crypto = require('crypto');
 
 require('dotenv').config();
@@ -20,10 +20,10 @@ const packetsFolderName = 'packet_files';
 const overWriteFlag = '--overwrite';
 const overWrite = process.argv.find(a => a === overWriteFlag);
 
-const insertQuestionSetStatement = db.prepare('INSERT INTO question_set (name, slug, difficulty) VALUES (?, ?, ?)');
+const insertQuestionSetStatement = db.prepare('INSERT INTO question_set (name, slug, difficulty, format, bonuses) VALUES (?, ?, ?, ?, ?)');
 const insertQuestionSetEditionStatement = db.prepare('INSERT INTO question_set_edition (question_set_id, name, slug, date) VALUES (?, ?, ?, ?)');
-const insertPacketStatement = db.prepare('INSERT INTO packet (question_set_edition_id, name) VALUES (?, ?)');
-const insertPacketQuestionStatement = db.prepare('INSERT INTO packet_question(packet_id, question_number, question_id) VALUES (?, ?, ?)');
+const insertPacketStatement = db.prepare('INSERT INTO packet (question_set_edition_id, name, descriptor, number) VALUES (?, ?, ?, ?)');
+const insertPacketQuestionStatement = db.prepare('INSERT INTO packet_question (packet_id, question_number, question_id) VALUES (?, ?, ?)');
 const insertQuestionStatement = db.prepare('INSERT INTO question (slug, metadata, author, editor, category, category_slug, subcategory, subcategory_slug, subsubcategory) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
 const insertTossupStatement = db.prepare('INSERT INTO tossup (question_id, question, answer, answer_sanitized, answer_primary) VALUES (?, ?, ?, ?, ?)');
 const insertBonusStatement = db.prepare('INSERT INTO bonus (question_id, leadin, leadin_sanitized) VALUES (?, ?, ?)');
@@ -53,7 +53,7 @@ const getHash = (questionText) => {
 const insertTossup = (packetId, questionNumber, question, answer, answer_sanitized, answerSlug, metadata, author, editor, category, subcategory, subsubcategory, slugDictionary) => {
     let questionHash = getHash(`${question}${answer}${metadata}`);
     let { questionId, tossupId } = findTossupStatement.get(questionHash) || {};
-    
+
     if (!questionId) {
         if (slugDictionary[answerSlug]) {
             slugDictionary[answerSlug] += 1;
@@ -62,8 +62,16 @@ const insertTossup = (packetId, questionNumber, question, answer, answer_sanitiz
             slugDictionary[answerSlug] = 1;
         }
 
-        questionId = insertQuestionStatement.run(answerSlug, metadata, author, editor, category, category ? slugify(category.toLowerCase()) : null, subcategory, subcategory ? slugify(subcategory.toLowerCase()) : null, subsubcategory).lastInsertRowid;
-        tossupId = insertTossupStatement.run(questionId, question, answer, answer_sanitized, shortenAnswerline(answer_sanitized)).lastInsertRowid;
+        questionId = insertQuestionStatement.run(
+            answerSlug, metadata,
+            author, editor,
+            category ? category : null, category ? slugify(category.toLowerCase()) : null,
+            subcategory ? subcategory : null, subcategory ? slugify(subcategory.toLowerCase()) : null,
+            subsubcategory ? slugify(subsubcategory.toLowerCase()) : null
+        ).lastInsertRowid;
+        tossupId = insertTossupStatement.run(
+            questionId, question, answer, answer_sanitized, shortenAnswerline(answer_sanitized)
+        ).lastInsertRowid;
         insertTossupHashStatement.run(questionHash, questionId, tossupId);
     }
 
@@ -72,41 +80,64 @@ const insertTossup = (packetId, questionNumber, question, answer, answer_sanitiz
     return tossupId;
 }
 
-const insertBonus = (packetId, questionNumber, leadin, leadin_sanitized, answerSlug, metadata, author, editor, category, subcategory, subsubcategory, answers, answers_sanitized, parts, parts_sanitized, values, difficultyModifiers, slugDictionary) => {
-    let questionHash = getHash(`${leadin}${parts.join('')}${answers.join('')}${metadata}`);
-    let { questionId, bonusId } = findBonusStatement.get(questionHash) || {};
-    
-    if (!questionId) {
-        if (slugDictionary[answerSlug]) {
-            slugDictionary[answerSlug] += 1;
-            answerSlug = answerSlug + '-' + slugDictionary[answerSlug];
-        } else {
-            slugDictionary[answerSlug] = 1;
-        }
-
-        questionId = insertQuestionStatement.run(answerSlug, metadata, author, editor, category, category ? slugify(category.toLowerCase()) : null, subcategory, subcategory ? slugify(subcategory.toLowerCase()) : null, subsubcategory).lastInsertRowid;
-        bonusId = insertBonusStatement.run(questionId, leadin, leadin_sanitized).lastInsertRowid;
-        
-        for (let i = 0; i < answers.length; i++) {
-            insertBonusPartStatement.run(bonusId, i + 1, 
-                parts[i], parts_sanitized ? parts_sanitized[i] : removeTags(parts[i]), 
-                answers[i], answers_sanitized ? answers_sanitized[i] : removeTags(answers[i]), 
-                answers_sanitized ? shortenAnswerline(answers_sanitized[i]) : shortenAnswerline(removeTags(answers[i])), 
-                values ? values[i] : null,
-                difficultyModifiers ? difficultyModifiers[i] : null);
-        }
-
-        insertBonusHashStatement.run(questionHash, questionId, bonusId);
+const insertBonus = (packetId, questionNumber, leadin, answers, answersSlug, parts, values, difficultyModifiers, metadata, author, editor, category, subcategory, subsubcategory, slugDictionary) => {
+    if (!difficultyModifiers) {
+        console.warn(`\tDifficulty modifiers missing for bonus ${questionNumber} in packet ID ${packetId} with answerlines:\n\t\t${answers.join("\n\t\t")}`);
+        return -1;
     }
+    try {
+        let primaryAnswers = answers.map(a => shortenAnswerline(removeTags(a)));
+        if ((new Set(difficultyModifiers)).size !== 3) {
+            console.warn(`Duplicate difficulty modifiers in bonus ${questionNumber} in packet ${packetId} with answerlines [${primaryAnswers.join(", ")}]: [${difficultyModifiers.join(", ")}].`);
+            return -1;
+        } else {
+            let questionHash = getHash(`${leadin}${parts.join('')}${answers.join('')}${metadata}`);
+            let { questionId, bonusId } = findBonusStatement.get(questionHash) || {};
 
-    insertPacketQuestionStatement.run(packetId, questionNumber, questionId);
+            if (!questionId) {
+                if (slugDictionary[answersSlug]) {
+                    slugDictionary[answersSlug] += 1;
+                    answersSlug = answersSlug + '-' + slugDictionary[answersSlug];
+                } else {
+                    slugDictionary[answersSlug] = 1;
+                }
 
-    return bonusId;
+                questionId = insertQuestionStatement.run(
+                    answersSlug, metadata,
+                    author, editor,
+                    category ? category : null, category ? slugify(category.toLowerCase()) : null,
+                    subcategory ? subcategory : null, subcategory ? slugify(subcategory.toLowerCase()) : null,
+                    subsubcategory ? slugify(subsubcategory.toLowerCase()) : null
+                ).lastInsertRowid;
+                bonusId = insertBonusStatement.run(questionId, leadin, removeTags(leadin)).lastInsertRowid;
+
+                for (let i = 0; i < answers.length; i++) {
+                    insertBonusPartStatement.run(
+                        bonusId, i + 1,
+                        parts[i], removeTags(parts[i]),
+                        answers[i], removeTags(answers[i]),
+                        primaryAnswers[i],
+                        values ? values[i] : null,
+                        difficultyModifiers ? difficultyModifiers[i] : null
+                    );
+                }
+
+                insertBonusHashStatement.run(questionHash, questionId, bonusId);
+            }
+
+            insertPacketQuestionStatement.run(packetId, questionNumber, questionId);
+
+            return bonusId;
+        }
+    } catch (err) {
+        console.log(`\tError parsing bonus ${questionNumber} of packet ID ${packetId} with\n\tanswerlines:\n\t${answers.join("\n\t")}`);
+        console.log(err);
+    }
 }
 
 const migrateQuestionSets = async () => {
     try {
-        const subFolders = await fs.readdir(questionSetsPath);
+        const subFolders = filterPaths(await fs.readdir(questionSetsPath, { withFileTypes: true }));
 
         for (const subFolder of subFolders) {
             const subFolderPath = path.join(questionSetsPath, subFolder);
@@ -117,120 +148,153 @@ const migrateQuestionSets = async () => {
                 console.log(`Skipping ${subFolder} as 'index.json' file not found.`);
                 continue;
             }
-    
+
             try {
-                const questionSetData = await fs.readFile(indexPath, 'utf8');
+                const questionSetData = await fs.readFile(indexPath, "utf8");
                 const questionSet = JSON.parse(questionSetData);
                 const editionsPath = path.join(subFolderPath, editionsFolderName);
-                const { name, slug, difficulty } = questionSet;
+                let { name: setName, slug, difficulty, format, bonuses } = questionSet;
+                format = format ? format : "powers";
+                bonuses = (bonuses !== undefined) ? +bonuses : +true;
                 let { id: questionSetId } = findQuestionSetStatement.get(slug) || {};
-    
+
                 if (!questionSetId) {
-                    questionSetId = insertQuestionSetStatement.run(name, slug, difficulty).lastInsertRowid;
+                    questionSetId = insertQuestionSetStatement.run(setName, slug, difficulty, format, bonuses).lastInsertRowid;
                 }
-    
+
                 if (!existsSync(editionsPath)) {
                     console.log(`Skipping ${subFolder} as ${editionsPath} folder not found.`);
                     continue;
                 }
-    
+
                 try {
-                    const editionsFolders = await fs.readdir(editionsPath);
-    
+                    const editionsFolders = filterPaths(await fs.readdir(editionsPath, { withFileTypes: true }));
+
                     for (const editionFolder of editionsFolders) {
                         const subFolderPath = path.join(editionsPath, editionFolder);
                         const indexPath = path.join(subFolderPath, 'index.json');
-                
+
                         if (!existsSync(indexPath)) {
                             console.log(`Skipping ${editionFolder} as 'index.json' file not found.`);
                             continue;
                         }
-                
+
                         try {
-                            const editionData = await fs.readFile(indexPath, 'utf8');
-    
+                            const editionData = await fs.readFile(indexPath, "utf8");
+
                             try {
                                 const edition = JSON.parse(editionData);
                                 const packetsFilePath = path.join(subFolderPath, packetsFolderName);
-                                const { name, slug: editionSlug, date } = edition;
-                                
+                                const { name: editionName, slug: editionSlug, date } = edition;
+
                                 if (!existsSync(packetsFilePath)) {
-                                    console.log(`Skipping ${subFolder} as ${packetsFilePath} folder not found.`);
+                                    console.log(`\tSkipping ${subFolder} as ${packetsFilePath} folder not found.`);
                                     continue;
                                 }
-    
+
                                 let { id: questionSetEditionId } = findQuestionSetEditionStatement.get(slug, editionSlug) || {};
-                
+
                                 if (questionSetEditionId) {
                                     if (overWrite) {
                                         deleteQuestionSetEditionStatement.run(questionSetEditionId);
                                     } else {
-                                        console.log(`Skipping ${name} as edition is already in database.`);
-                                        continue;                     
+                                        console.log(`\tSkipping ${editionName} as edition is already in database.`);
+                                        continue;
                                     }
                                 }
-    
-                                questionSetEditionId = insertQuestionSetEditionStatement.run(questionSetId, name, editionSlug, date).lastInsertRowid;
-                
+
+                                questionSetEditionId = insertQuestionSetEditionStatement.run(questionSetId, editionName, editionSlug, date).lastInsertRowid;
+
                                 try {
-                                    const packetFiles = await fs.readdir(packetsFilePath);
-    
-                                    for (const packetFile of packetFiles) {
-                                        const gameFilePath = path.join(packetsFilePath, packetFile);
-                                        const packetName = packetFile.replace('.json', '');
-                
+                                    const packetFileDirents = filterFiles(await fs.readdir(packetsFilePath, { withFileTypes: true, recursive: true }), "json");
+
+                                    for (const [i, packetFileDirent] of packetFileDirents.entries()) {
+                                        const packetFilePath = path.join(packetFileDirent.parentPath, packetFileDirent.name);
+                                        const packetFile = packetFileDirent.name;
+                                        const packetName = packetFile.replace(".json", "");
+                                        let { descriptor: packetDescriptor, number: packetNumber } = parsePacketMetadata(packetName, i + 1);
+
+                                        console.log(`Set: ${setName} | Edition: ${editionName} | Packet #${packetNumber} | ID: ${packetDescriptor} | Filename: ${packetFile}`);
                                         try {
-                                            const packetDataContent = await fs.readFile(gameFilePath);
+                                            const packetDataContent = await fs.readFile(packetFilePath);
                                             const packetData = JSON.parse(packetDataContent);
-                                            const { lastInsertRowid: packetId } = insertPacketStatement.run(questionSetEditionId, packetName);
-            
-                                            packetData.tossups.forEach(({ question, answer, answer_sanitized, metadata }, index) => {
-                                                const { author, category, subcategory, subsubcategory, editor } = parseMetadata(metadata, questionSet.metadataStyle);
-                                                const sanitizedAnswer = answer_sanitized ?? removeTags(answer);
-                                                
-                                                insertTossup(
-                                                    packetId, 
-                                                    index + 1, 
-                                                    question, 
-                                                    answer,
-                                                    sanitizedAnswer,
-                                                    slugify(shortenAnswerline(removeTags(answer)).slice(0, 50), slugifyOptions), 
-                                                    metadata, 
-                                                    author, 
-                                                    editor, 
-                                                    category, 
-                                                    subcategory, 
-                                                    subsubcategory,
-                                                    slugDictionary
-                                                );
+                                            const { lastInsertRowid: packetId } = insertPacketStatement.run(questionSetEditionId, packetName, packetDescriptor, packetNumber);
+
+                                            let numTossups = 0;
+                                            let numBonuses = 0;
+
+                                            packetData.tossups?.forEach(({ question, answer, metadata }, index) => {
+                                                if (metadata || questionSet.metadataStyle === metadataTypes.none) {
+                                                    const { author, category, subcategory, subsubcategory, editor } = parseMetadata(metadata, questionSet.metadataStyle);
+                                                    const sanitizedAnswer = removeTags(answer);
+                                                    const answerSlug = slugify(shortenAnswerline(removeTags(answer)).slice(0, 50), slugifyOptions);
+
+                                                    if (answerSlug) {
+                                                        let tossupId = insertTossup(
+                                                            packetId,
+                                                            index + 1,
+                                                            question,
+                                                            answer,
+                                                            sanitizedAnswer,
+                                                            answerSlug,
+                                                            metadata,
+                                                            author,
+                                                            editor,
+                                                            category,
+                                                            subcategory,
+                                                            subsubcategory,
+                                                            slugDictionary
+                                                        );
+                                                        if (tossupId > 0) {
+                                                            numTossups += 1;
+                                                        }
+                                                    } else {
+                                                        console.log(`\tError in saving data for tossup ${index + 1}: Couldn't process answer slug.`);
+                                                    }
+                                                } else {
+                                                    console.log(`\tError in saving data for tossup ${index + 1}: Couldn't process metadata.`)
+                                                }
                                             });
-            
-                                            packetData.bonuses?.forEach(({ leadin, leadin_sanitized, metadata, answers, answers_sanitized, parts, parts_sanitized, values, difficultyModifiers }, index) => {
-                                                const { author, category, subcategory, subsubcategory, editor } = parseMetadata(metadata, questionSet.metadataStyle);
-    
-                                                insertBonus(
-                                                    packetId,
-                                                    index + 1,
-                                                    leadin,
-                                                    leadin_sanitized,
-                                                    slugify((answers_sanitized || answers).map(a => shortenAnswerline(removeTags(a)).slice(0, 25)).join(' '), slugifyOptions),
-                                                    metadata,
-                                                    author,
-                                                    editor,
-                                                    category,
-                                                    subcategory,
-                                                    subsubcategory,
-                                                    answers, 
-                                                    answers_sanitized,
-                                                    parts, 
-                                                    parts_sanitized, 
-                                                    values, 
-                                                    difficultyModifiers,
-                                                    slugDictionary
-                                                );
-                                            });
+
+                                            if (bonuses) {
+                                                packetData.bonuses?.forEach(({ leadin, metadata, answers, parts, values, difficultyModifiers }, index) => {
+                                                    if (metadata || questionSet.metadataStyle === metadataTypes.none) {
+                                                        const { author, category, subcategory, subsubcategory, editor } = parseMetadata(metadata, questionSet.metadataStyle);
+                                                        const answersSlug = slugify(answers?.map(a => shortenAnswerline(removeTags(a)).slice(0, 25)).join(" "), slugifyOptions)
+
+                                                        if (answersSlug) {
+                                                            let bonusId = insertBonus(
+                                                                packetId,
+                                                                index + 1,
+                                                                leadin,
+                                                                answers,
+                                                                answersSlug,
+                                                                parts,
+                                                                values,
+                                                                difficultyModifiers,
+                                                                metadata,
+                                                                author,
+                                                                editor,
+                                                                category,
+                                                                subcategory,
+                                                                subsubcategory,
+                                                                slugDictionary
+                                                            );
+                                                            if (bonusId > 0) {
+                                                                numBonuses += 1;
+                                                            }
+                                                        } else {
+                                                            console.log(`\tError in saving data for bonus ${index + 1}: Couldn't process answer slug.`);
+                                                        }
+                                                    } else {
+                                                        console.log(`\tError in saving data for bonus ${index + 1}: Couldn't process metadata.`)
+                                                    }
+                                                });
+                                            }
+
+                                            console.log(`\t${numTossups} tossups` + (bonuses ? `, ${numBonuses} bonuses` : ""));
                                         } catch (err) {
-                                            console.error(`Error processing ${gameFilePath}: `, err);
+                                            console.error(`Error processing ${packetFilePath}: `, err);
                                         }
                                     }
                                 } catch (err) {
@@ -242,11 +306,11 @@ const migrateQuestionSets = async () => {
                         } catch (err) {
                             console.error(`Error reading ${indexPath}:`, err);
                         }
-                    }                    
-                } catch(err) {
+                    }
+                } catch (err) {
                     console.error('Error reading editions folder: ', err);
                 }
-            } catch {
+            } catch (err) {
                 console.error(`Error reading ${indexPath}: `, err);
             }
         }

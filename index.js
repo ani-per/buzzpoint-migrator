@@ -1,11 +1,11 @@
-const Database = require('better-sqlite3');
+const Database = require("better-sqlite3");
 
 // Create or open the SQLite database file
-const db = new Database('database.db');
-const { shortenAnswerline, removeTags } = require('./utils');
-const slugify = require('slugify');
+const db = new Database("database.db");
+const { shortenAnswerline, removeTags } = require("./utils");
+const slugify = require("slugify");
 
-const getStatement = db.prepare('SELECT answer FROM tossup');
+const getStatement = db.prepare("SELECT answer FROM tossup");
 const answers = getStatement.all();
 const slugifyOptions = {
     lower: true,
