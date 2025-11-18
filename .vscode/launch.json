@@ -5,7 +5,7 @@
         "name": "Debug",
         "type": "node-terminal",
         "request": "launch",
-        "command": "rm database.db && node init-schema.js && node migrate-question-sets.js"
+        "command": "rm database.db && node init-schema.js && node migrate-question-sets.js && node migrate-tournaments.js"
       }
     ]
   }
