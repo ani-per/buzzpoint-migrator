@@ -250,7 +250,7 @@ const migrateTournaments = async () => {
 
                 if (!packet) {
                   console.warn(
-                    `Unable to find tossup ${questionNumber} in packet ID ${packetId} of tournament ID ${tournamentId} (${tournamentName}) in game between ${team} and ${opponent}.`
+                    `No tossup ${questionNumber} found in packet ID ${packetId} of tournament ${tournamentName} in game between ${team} and ${opponent}.`
                   );
                   continue;
                 }
@@ -379,7 +379,11 @@ const migrateTournaments = async () => {
                     packetId,
                     rounds_to_exclude_from_individual_stats?.find((r) => r === roundNumber) ? 1 : 0
                   );
-                  console.log(`\tMultiple packets used for round ${roundNumber} of ${tournamentName}.`);
+                  console.log([
+                    `\tMultiple packets used for round ${roundNumber} of ${tournamentName}:`,
+                    Object.keys(roundDictionary[roundNumber]).join("\n\t\t"),
+                    packetName
+                  ].join("\n\t\t"));
 
                   roundDictionary[roundNumber][packetName] = {
                     packetId,
@@ -455,7 +459,7 @@ const migrateTournaments = async () => {
 
                     if (!tossup) {
                       console.warn(
-                        `\tUnable to find tossup ${question_number} in packet #${packet.number} (${packet.descriptor}) of tournament #${tournamentId} (${tournamentName}) in round ${roundNumber} game between ${teamOneName} and ${teamTwoName}.`
+                        `\tNo tossup ${question_number} found in packet #${packet.number} (${packet.descriptor}) of tournament ${tournamentName} in round ${roundNumber} game between ${teamOneName} and ${teamTwoName}.`
                       );
                       return;
                     }
@@ -491,10 +495,8 @@ const migrateTournaments = async () => {
 
                         if (!bonusPart) {
                           console.warn(
-                            `Unable to find bonus with part ${index + 1} for ${
-                              bonus.question.question_number
-                            } in packet ID ${packetId}, which was directed to ${
-                              team.name
+                            `No bonus with part ${index + 1} found for ${bonus.question.question_number
+                            } in packet ID ${packetId}, which was directed to ${team.name
                             } at tournament ID ${tournamentId} (${tournamentName}).`
                           );
                           return;
