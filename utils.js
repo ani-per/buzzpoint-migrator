@@ -23,22 +23,29 @@ toTitleCase = (s) => (
 );
 exports.parsePacketMetadata = (packetName, index) => {
     let packetNumber = index;
-    let packetInteger = Math.max.apply(null, packetName.match(/\d+/g));
     let packetDescriptor = "";
+    let packetIntegers = (packetName.match(/\d+/g) || []).map(s => parseInt(s));
     let cleanedPacketFileName = packetName.toLowerCase();
     let cleanedPacketFileNameParts = cleanedPacketFileName.split(/[-–—_,.:|\s+]/);
     if (packetWords.some(s => cleanedPacketFileName.includes(s))) {
-        let packetWordIndex = packetWords.findIndex(s => cleanedPacketFileName.includes(s));
+        let packetWordIndex = cleanedPacketFileNameParts.findIndex(
+            fileNamePart => packetWords.some(s => fileNamePart.includes(s))
+        );
         packetDescriptor = toTitleCase(cleanedPacketFileNameParts[packetWordIndex + 1]);
-        let packetIdentifierNumber = Math.max.apply(null, packetDescriptor.match(/\d+/g))
-        if (packetIdentifierNumber > 0) {
+        let packetIdentifierNumber = parseInt(packetDescriptor.match(/\d+/g));
+        if (packetIdentifierNumber > 0 && packetIdentifierNumber < 25) {
+            packetDescriptor = packetIdentifierNumber.toString();
             packetNumber = packetIdentifierNumber;
         }
-    } else if (packetInteger > 0) {
-        packetNumber = packetInteger;
-        packetDescriptor = packetInteger.toString();
-    } else if (index) {
-        packetDescriptor = index.toString();
+    } else if (packetIntegers.length > 0) {
+        packetNumber = packetIntegers.find(i => i > 0 && i < 25) || index;
+        packetDescriptor = packetNumber.toString();
+    } else if (packetIntegers.length == 0) {
+        if (packetName.length < 3) {
+            packetDescriptor = packetName;
+        } else {
+            packetDescriptor = index.toString();
+        }
     } else {
         console.log(`\tUnable to detect packet number or identifier for ${packetName}. Setting number to ${index} and identifier to ${packetName}.`);
         packetDescriptor = packetName;
