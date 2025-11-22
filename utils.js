@@ -12,7 +12,7 @@ exports.filterPaths = (dir) => (
 exports.filterFiles = (dir, extension) => (
     dir.filter(f => f.name.endsWith(`.${extension}`))
 );
-exports.cleanName = (name) => (name.replaceAll(/\(([a-zA-Z0-9]+)\)/g, "").trim());
+exports.cleanName = (name) => (name.replaceAll(/\(([a-zA-Z0-9]+)\)/g, "").replaceAll("/", ", ").trim());
 
 packetWords = ["packet", "round"];
 toTitleCase = (s) => (
