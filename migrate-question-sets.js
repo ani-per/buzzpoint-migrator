@@ -115,7 +115,7 @@ const insertTossup = (
   subsubcategory,
   slugDictionary
 ) => {
-  let questionHash = getHash(`${question}`);
+  let questionHash = getHash(`${question}${answer}`);
   let { questionId, tossupId } = findTossupStatement.get(questionHash) || {};
 
   if (!questionId) {
