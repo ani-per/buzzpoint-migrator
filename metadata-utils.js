@@ -17,17 +17,19 @@ const metadataTypes = {
     none: 7,
 }
 
-const parseMetadata = (metadata, metadataType) => {
+const parseMetadata = (metadata, metadataType, authorFirst = true) => {
     let category = "", subcategory = "", subsubcategory = "", author = "", editor = "";
+    let categoryIndex = authorFirst ? 2 : 1;
+    let authorIndex = authorFirst ? 1 : 2;
 
     if (metadata) {
         if (metadataType === metadataTypes.default) {
             const regex = new RegExp(/(.*?), (.*)/);
             const metadataMatch = metadata?.match(regex) || [];
-            const rawCategory = metadataMatch[2];
+            const rawCategory = metadataMatch[categoryIndex];
 
-            author = metadataMatch[1]?.trim();
-            [subcategory, subsubcategory] = (rawCategory || '').split(' - ');
+            author = metadataMatch[authorIndex]?.trim();
+            [subcategory, subsubcategory] = (rawCategory || "").split(" - ");
             category = subcategoryMap[subcategory] || subcategory;
         } else if (metadataType === metadataTypes.noAuthor) {
             subcategory = metadata;
@@ -36,26 +38,26 @@ const parseMetadata = (metadata, metadataType) => {
             const regex = new RegExp(/(.*?)[,-](.*)/);
             const metadataMatch = metadata?.match(regex) || [];
 
-            author = metadataMatch[1]?.trim();
-            subcategory = metadataMatch[2]?.trim();
+            author = metadataMatch[authorIndex]?.trim();
+            subcategory = metadataMatch[categoryIndex]?.trim();
             category = subcategoryMap[subcategory] || subcategory;
         } else if (metadataType === metadataTypes.nsc) {
             const regex = new RegExp(/(.+?), (.*)&gt;.*Editor: (.*)/);
             const metadataMatch = metadata?.match(regex) || [];
-            const rawCategory = metadataMatch[2];
+            const rawCategory = metadataMatch[categoryIndex];
 
-            author = metadataMatch[1];
+            author = metadataMatch[authorIndex];
             editor = metadataMatch[3];
-            [category, subcategory, subsubcategory] = (rawCategory || '').split(' - ');
+            [category, subcategory, subsubcategory] = (rawCategory || "").split(" - ");
         } else if (metadataType === metadataTypes.nasat) {
             const regex = new RegExp(/(.+?) , (.*)/);
             const metadataMatch = metadata?.match(regex) || [];
-            const rawCategory = metadataMatch[2];
+            const rawCategory = metadataMatch[categoryIndex];
 
-            author = metadataMatch[1];
-            [category, subcategory, subsubcategory] = (rawCategory || '').split(' - ');
+            author = metadataMatch[authorIndex];
+            [category, subcategory, subsubcategory] = (rawCategory || "").split(" - ");
         } else if (metadataType === metadataTypes.qbReader) {
-            const metadataMatch = metadata.split(' - ');
+            const metadataMatch = metadata.split(" - ");
             category = metadataMatch[0];
             subcategory = metadataMatch[1];
             if (metadataMatch.length > 2) {
@@ -63,9 +65,11 @@ const parseMetadata = (metadata, metadataType) => {
             }
         } else if (metadataType === metadataTypes.none) {
             // No processing required
+        } else {
+            console.error("Improper metadata style.");
         }
     }
-    subcategory = subcategory.replaceAll(category, "").trim()
+    subcategory = subcategory.replaceAll(category, "").trim();
 
     return {
         category,
