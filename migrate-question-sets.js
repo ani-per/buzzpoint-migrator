@@ -356,7 +356,7 @@ const migrateQuestionSets = async () => {
                         const { author, category, subcategory, subsubcategory, editor } = parseMetadata(
                           metadata,
                           questionSet.metadataStyle,
-                          !!questionSet?.authorOrder
+                          ("authorOrder" in questionSet) ? !!questionSet.authorOrder : true
                         );
                         const sanitizedAnswer = removeTags(answer);
                         const answerSlug = slugify(shortenAnswerline(removeTags(answer)).slice(0, 50), slugifyOptions);
@@ -394,7 +394,7 @@ const migrateQuestionSets = async () => {
                             const { author, category, subcategory, subsubcategory, editor } = parseMetadata(
                               metadata,
                               questionSet.metadataStyle,
-                              !!questionSet?.authorOrder
+                              ("authorOrder" in questionSet) ? !!questionSet.authorOrder : true
                             );
                             const answersSlug = slugify(
                               answers?.map((a) => shortenAnswerline(removeTags(a)).slice(0, 25)).join(" "),
