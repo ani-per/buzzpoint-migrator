@@ -9,6 +9,7 @@ const {
   parsePacketMetadata,
   filterPaths,
   filterFiles,
+  cleanPacketName,
 } = require("./utils");
 const slugify = require("slugify");
 
@@ -258,13 +259,14 @@ const migrateQuestionSets = async () => {
         const questionSetData = await fs.readFile(indexPath, "utf8");
         const questionSet = JSON.parse(questionSetData);
         const editionsPath = path.join(subFolderPath, editionsFolderName);
-        let { name: setName, slug, difficulty, format, bonuses } = questionSet;
-        format = format ? format : "powers";
-        bonuses = bonuses !== undefined ? +bonuses : +true;
-        let { id: questionSetId } = findQuestionSetStatement.get(slug) || {};
+        let { name: setName, difficulty: setDifficulty, format: setFormat, bonuses: setBonuses } = questionSet;
+        setSlug = slugify(setName, slugifyOptions);
+        setFormat = setFormat ? setFormat : "powers";
+        setBonuses = setBonuses !== undefined ? +setBonuses : +true;
+        let { id: questionSetId } = findQuestionSetStatement.get(setSlug) || {};
 
         if (!questionSetId) {
-          questionSetId = insertQuestionSetStatement.run(setName, slug, difficulty, format, bonuses).lastInsertRowid;
+          questionSetId = insertQuestionSetStatement.run(setName, setSlug, setDifficulty, setFormat, setBonuses).lastInsertRowid;
         }
 
         if (!existsSync(editionsPath)) {
@@ -290,14 +292,15 @@ const migrateQuestionSets = async () => {
               try {
                 const edition = JSON.parse(editionData);
                 const packetsFilePath = path.join(subFolderPath, packetsFolderName);
-                const { name: editionName, slug: editionSlug, date } = edition;
+                const { name: editionName, date } = edition;
+                const editionSlug = slugify(editionName, slugifyOptions);
 
                 if (!existsSync(packetsFilePath)) {
                   console.log(`\tSkipping ${subFolder} as ${packetsFilePath} folder not found.`);
                   continue;
                 }
 
-                let { id: questionSetEditionId } = findQuestionSetEditionStatement.get(slug, editionSlug) || {};
+                let { id: questionSetEditionId } = findQuestionSetEditionStatement.get(setSlug, editionSlug) || {};
 
                 if (questionSetEditionId) {
                   if (overWrite) {
@@ -327,11 +330,11 @@ const migrateQuestionSets = async () => {
                   for (const [i, packetFileDirent] of packetFileDirents.entries()) {
                     const packetFilePath = path.join(packetFileDirent.parentPath, packetFileDirent.name);
                     const packetFile = packetFileDirent.name;
-                    const packetName = packetFile.replace(".json", "");
+                    const packetName = cleanPacketName(packetFile);
                     let { descriptor: packetDescriptor, number: packetNumber } = parsePacketMetadata(packetName, i + 1);
 
                     console.log(
-                      `Set: ${setName} | Edition: ${editionName} | Packet #${packetNumber} | ID: ${packetDescriptor} | Filename: ${packetFile} | Link: ${
+                      `Set: ${setName} | Edition: ${editionName} | Packet #${packetNumber} | ID: ${packetDescriptor} | Filename: ${packetName} | Link: ${
                         pathToFileURL(packetFilePath).href
                       }`
                     );
@@ -385,7 +388,7 @@ const migrateQuestionSets = async () => {
                         }
                       });
 
-                      if (bonuses) {
+                      if (setBonuses) {
                         packetData.bonuses?.forEach(
                           ({ leadin, metadata, answers, parts, values, difficultyModifiers }, index) => {
                             if (!metadata && questionSet.metadataStyle !== metadataTypes.none) {
@@ -431,7 +434,7 @@ const migrateQuestionSets = async () => {
                         );
                       }
 
-                      console.log(`\t${numTossups} tossups` + (bonuses ? `, ${numBonuses} bonuses` : ""));
+                      console.log(`\t${numTossups} tossups` + (setBonuses ? `, ${numBonuses} bonuses` : ""));
                     } catch (err) {
                       console.error(`Error processing ${packetFilePath}: `, err);
                     }
