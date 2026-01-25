@@ -7,7 +7,7 @@ const slugify = require("slugify");
 const { existsSync } = require("fs");
 const fs = require("fs/promises");
 const path = require("path");
-const { slugifyOptions, parsePacketMetadata, filterPaths, filterFiles, cleanName } = require("./utils");
+const { slugifyOptions, parsePacketMetadata, filterPaths, filterFiles, cleanName, cleanPacketName } = require("./utils");
 
 require("dotenv").config();
 
@@ -100,7 +100,6 @@ const migrateTournaments = async () => {
         const gamesFilePath = path.join(subFolderPath, gamesFolderName);
         const {
           name: tournamentName,
-          slug: tournamentSlug,
           set,
           edition,
           location,
@@ -110,6 +109,7 @@ const migrateTournaments = async () => {
           rounds_to_exclude_from_individual_stats,
           rounds,
         } = tournament;
+        const tournamentSlug = slugify(tournamentName, slugifyOptions);
         const { id: existingTournamentId } = findTournamentStatement.get(tournamentSlug) || {};
 
         if (existingTournamentId) {
@@ -250,7 +250,7 @@ const migrateTournaments = async () => {
 
                 if (!packet) {
                   console.warn(
-                    `No tossup ${questionNumber} found in packet ID ${packetId} of tournament ${tournamentName} in game between ${team} and ${opponent}.`
+                    `Unable to find tossup ${questionNumber} in packet ID ${packetId} of tournament ID ${tournamentId} (${tournamentName}) in game between ${team} and ${opponent}.`
                   );
                   continue;
                 }
@@ -333,7 +333,7 @@ const migrateTournaments = async () => {
             try {
               const roundNumber = parseInt(gameFile.split("_")[tournament.name.toLowerCase().includes("pace") ? 0 : 1]);
               const gameData = JSON.parse(gameDataContent);
-              const packetName = gameData.packets.replaceAll(/\((\d+)\)/g, "").trim();
+              const packetName = cleanPacketName(gameData.packets);
               let { descriptor: packetDescriptor, number: _ } = parsePacketMetadata(packetName, 0);
 
               const teamOneName = cleanName(gameData.match_teams[0].team.name);
@@ -379,11 +379,7 @@ const migrateTournaments = async () => {
                     packetId,
                     rounds_to_exclude_from_individual_stats?.find((r) => r === roundNumber) ? 1 : 0
                   );
-                  console.log([
-                    `\tMultiple packets used for round ${roundNumber} of ${tournamentName}:`,
-                    Object.keys(roundDictionary[roundNumber]).join("\n\t\t"),
-                    packetName
-                  ].join("\n\t\t"));
+                  console.log(`\tMultiple packets used for round ${roundNumber} of tournament ${tournamentId} (${tournamentName}).`);
 
                   roundDictionary[roundNumber][packetName] = {
                     packetId,
@@ -459,7 +455,7 @@ const migrateTournaments = async () => {
 
                     if (!tossup) {
                       console.warn(
-                        `\tNo tossup ${question_number} found in packet #${packet.number} (${packet.descriptor}) of tournament ${tournamentName} in round ${roundNumber} game between ${teamOneName} and ${teamTwoName}.`
+                        `\tUnable to find tossup ${question_number} in packet #${packet.number} (${packet.descriptor}) of tournament ${tournamentId} (${tournamentName}) in round ${roundNumber} game between ${teamOneName} and ${teamTwoName}.`
                       );
                       return;
                     }
@@ -495,8 +491,10 @@ const migrateTournaments = async () => {
 
                         if (!bonusPart) {
                           console.warn(
-                            `No bonus with part ${index + 1} found for ${bonus.question.question_number
-                            } in packet ID ${packetId}, which was directed to ${team.name
+                            `Unable to find bonus with part ${index + 1} for ${
+                              bonus.question.question_number
+                            } in packet ID ${packetId}, which was directed to ${
+                              team.name
                             } at tournament ID ${tournamentId} (${tournamentName}).`
                           );
                           return;
@@ -509,7 +507,7 @@ const migrateTournaments = async () => {
                 });
               } catch (err) {
                 console.warn(
-                  `\tCouldn't find packet ${packetDescriptor} in edition ${edition} for game ${gameFile.replaceAll(
+                  `\tCouldn't find packet ${packetDescriptor} (${packetName}) in the \`packet_files\` folder for edition ${edition} for game ${gameFile.replaceAll(
                     ".qbj",
                     ""
                   )}.`
@@ -517,11 +515,11 @@ const migrateTournaments = async () => {
                 console.log(err);
               }
             } catch (err) {
-              console.error(`Error occurred while parsing JSON in ${gameFilePath} and writing it to db (2):`, err);
+              console.error(`Error occurred while parsing JSON in ${gameFilePath} and writing it to db:`, err);
             }
           }
         } catch (err) {
-          console.log(`\tCouldn't find edition ${edition} of question set ${set} for tournament ${subFolder}.`);
+          console.log(`\tCouldn't find edition ${edition} of question set ${set} for tournament ${tournamentName} in folder ${subFolder}.`);
         }
       } catch (err) {
         console.error(`Error reading ${indexPath}: `, err);

@@ -3,8 +3,9 @@ exports.sanitize = (text) => text.replace(/ *\([^)]*\)/g, "").trim();
 exports.shortenAnswerline = (answerline) => answerline.split("[")[0].replace(/ *\([^)]*\)/g, "").replaceAll(/\&nbsp;/g, " ").replaceAll(/\&amp;/g, "\&").trim();
 exports.removeTags = (text) => text.replace(/(<([^>]+)>)/ig, "").replaceAll(/\&nbsp;/g, " ").replaceAll(/\&amp;/g, "\&");
 exports.slugifyOptions = {
+    remove: /[*+~.()'"!:@]/g,
     lower: true,
-    strict: true
+    strict: true,
 }
 exports.filterPaths = (dir) => (
     dir.filter(f => !(["DS_Store", "zip"].map(s => f.name.endsWith(`.${s}`)).some(f => f))).map(f => f.name)
@@ -12,7 +13,8 @@ exports.filterPaths = (dir) => (
 exports.filterFiles = (dir, extension) => (
     dir.filter(f => f.name.endsWith(`.${extension}`))
 );
-exports.cleanName = (name) => (name.replaceAll(/\(([a-zA-Z0-9]+)\)/g, "").replaceAll("/", ", ").trim());
+exports.cleanName = (name) => (name.replaceAll(/\(([a-zA-Z0-9]+)\)/g, "").trim());
+exports.cleanPacketName = (name) => (name.replaceAll(".json", "").replaceAll("copy", "").replaceAll(/\((\d+)\)/g, "").trim());
 
 packetWords = ["packet", "round"];
 toTitleCase = (s) => (
