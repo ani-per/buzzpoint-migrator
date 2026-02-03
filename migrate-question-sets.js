@@ -242,23 +242,26 @@ const insertBonus = (
 };
 
 const migrateQuestionSets = async () => {
-  try {
-    const subFolders = filterPaths(await fs.readdir(questionSetsPath, { withFileTypes: true }));
+  console.log("-".repeat(20));
+  console.log("Processing packet JSONs for each set ...");
 
-    for (const subFolder of subFolders) {
-      const subFolderPath = path.join(questionSetsPath, subFolder);
-      const indexPath = path.join(subFolderPath, "index.json");
+  try {
+    const setFolders = filterPaths(await fs.readdir(questionSetsPath, { withFileTypes: true }));
+
+    for (const setFolder of setFolders) {
+      const setFolderPath = path.join(questionSetsPath, setFolder);
+      const setIndexPath = path.join(setFolderPath, "index.json");
       let slugDictionary = {};
 
-      if (!existsSync(indexPath)) {
-        console.log(`Skipping ${subFolder} as 'index.json' file not found.`);
+      if (!existsSync(setIndexPath)) {
+        console.log(`Skipping folder \`${setFolder}\`, since it doesn't contain an \`index.json\`.`);
         continue;
       }
 
       try {
-        const questionSetData = await fs.readFile(indexPath, "utf8");
+        const questionSetData = await fs.readFile(setIndexPath, "utf8");
         const questionSet = JSON.parse(questionSetData);
-        const editionsPath = path.join(subFolderPath, editionsFolderName);
+        const editionsPath = path.join(setFolderPath, editionsFolderName);
         let { name: setName, difficulty: setDifficulty, format: setFormat, bonuses: setBonuses } = questionSet;
         setSlug = slugify(setName, slugifyOptions);
         setFormat = setFormat ? setFormat : "powers";
@@ -270,7 +273,7 @@ const migrateQuestionSets = async () => {
         }
 
         if (!existsSync(editionsPath)) {
-          console.log(`Skipping ${subFolder} as ${editionsPath} folder not found.`);
+          console.log(`Skipping set ${setName} in folder \`${setFolder}\`, since it doesn't contain an \`${editionsFolderName}\` subfolder.`);
           continue;
         }
 
@@ -278,25 +281,25 @@ const migrateQuestionSets = async () => {
           const editionsFolders = filterPaths(await fs.readdir(editionsPath, { withFileTypes: true }));
 
           for (const editionFolder of editionsFolders) {
-            const subFolderPath = path.join(editionsPath, editionFolder);
-            const indexPath = path.join(subFolderPath, "index.json");
+            const editionFolderPath = path.join(editionsPath, editionFolder);
+            const editionIndexPath = path.join(editionFolderPath, "index.json");
 
-            if (!existsSync(indexPath)) {
-              console.log(`Skipping ${editionFolder} as 'index.json' file not found.`);
+            if (!existsSync(editionIndexPath)) {
+              console.log(`Skipping edition of set ${setName} in subfolder \`${editionFolder}\`, since it doesn't contain an \`index.json\`.`);
               continue;
             }
 
             try {
-              const editionData = await fs.readFile(indexPath, "utf8");
+              const editionData = await fs.readFile(editionIndexPath, "utf8");
 
               try {
                 const edition = JSON.parse(editionData);
-                const packetsFilePath = path.join(subFolderPath, packetsFolderName);
+                const packetsFilePath = path.join(editionFolderPath, packetsFolderName);
                 const { name: editionName, date } = edition;
                 const editionSlug = slugify(editionName, slugifyOptions);
 
                 if (!existsSync(packetsFilePath)) {
-                  console.log(`\tSkipping ${subFolder} as ${packetsFilePath} folder not found.`);
+                  console.log(`\tSkipping edition ${editionName} in subfolder ${editionFolder} of set ${setName} in folder \`${setFolder}\`, since it doesn't contain a \`${packetsFolderName}\` subfolder.`);
                   continue;
                 }
 
@@ -306,7 +309,7 @@ const migrateQuestionSets = async () => {
                   if (overWrite) {
                     deleteQuestionSetEditionStatement.run(questionSetEditionId);
                   } else {
-                    console.log(`\tSkipping ${editionName} as edition is already in database.`);
+                    console.log(`\tSkipping edition ${editionName} of set ${setName} in the subfolder \`${editionFolder}\` of folder ${setFolder}, since the edition is already in database.`);
                     continue;
                   }
                 }
@@ -334,8 +337,7 @@ const migrateQuestionSets = async () => {
                     let { descriptor: packetDescriptor, number: packetNumber } = parsePacketMetadata(packetName, i + 1);
 
                     console.log(
-                      `Set: ${setName} | Edition: ${editionName} | Packet #${packetNumber} | ID: ${packetDescriptor} | Filename: ${packetName} | Link: ${
-                        pathToFileURL(packetFilePath).href
+                      `Set: ${setName} (\`${setFolder}\`) | Edition: ${editionName} (\`${editionFolder}\`) | Packet #${packetNumber} | ID: ${packetDescriptor} | Filename: ${packetName} | Link: ${pathToFileURL(packetFilePath).href
                       }`
                     );
                     try {
@@ -353,7 +355,7 @@ const migrateQuestionSets = async () => {
 
                       packetData.tossups?.forEach(({ question, answer, metadata }, index) => {
                         if (!metadata && questionSet.metadataStyle !== metadataTypes.none) {
-                          console.log(`\tWarning saving data for tossup ${index + 1}: metadata not found.`);
+                          console.warn(`\tWarning saving data for tossup ${index + 1}: metadata not found.`);
                         }
 
                         const { author, category, subcategory, subsubcategory, editor } = parseMetadata(
@@ -384,7 +386,7 @@ const migrateQuestionSets = async () => {
                             numTossups += 1;
                           }
                         } else {
-                          console.log(`\tError in saving data for tossup ${index + 1}: Couldn't process answer slug.`);
+                          console.warn(`\tError in saving data for tossup ${index + 1}: Couldn't process answer slug.`);
                         }
                       });
 
@@ -426,7 +428,7 @@ const migrateQuestionSets = async () => {
                                 numBonuses += 1;
                               }
                             } else {
-                              console.log(
+                              console.warn(
                                 `\tError in saving data for bonus ${index + 1}: Couldn't process answer slug.`
                               );
                             }
@@ -443,22 +445,24 @@ const migrateQuestionSets = async () => {
                   console.error(`Error reading files in ${packetsFilePath}: `, err);
                 }
               } catch (err) {
-                console.error(`Error creating set edition at ${indexPath}: `, err);
+                console.error(`Error creating set edition at ${editionIndexPath}: `, err);
               }
             } catch (err) {
-              console.error(`Error reading ${indexPath}:`, err);
+              console.error(`Error reading \`${editionIndexPath}\`:`, err);
             }
           }
         } catch (err) {
           console.error("Error reading editions folder: ", err);
         }
       } catch (err) {
-        console.error(`Error reading ${indexPath}: `, err);
+        console.error(`Error reading \`${setIndexPath}\`: `, err);
       }
     }
   } catch (err) {
     console.error("Error reading question sets folder: ", err);
   }
+
+  console.log("Processing sets finished.");
 };
 
 migrateQuestionSets();
