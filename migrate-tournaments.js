@@ -7,7 +7,9 @@ const slugify = require("slugify");
 const { existsSync } = require("fs");
 const fs = require("fs/promises");
 const path = require("path");
-const { slugifyOptions, parsePacketMetadata, filterPaths, filterFiles, cleanName, cleanPacketName } = require("./utils");
+const { slugifyOptions, parsePacketMetadata, filterPaths, filterFiles, cleanName, cleanPacketName, findSimilarNames } = require("./utils");
+const { cwd } = require("process");
+const { pathToFileURL } = require("url");
 
 require("dotenv").config();
 
@@ -41,6 +43,7 @@ const insertBonusPartDirectStatement = db.prepare(
 
 const deleteTournamentStatement = db.prepare("DELETE FROM tournament WHERE id = ?");
 const findTournamentStatement = db.prepare("SELECT id FROM tournament WHERE slug = ?");
+const findQuestionSetsStatement = db.prepare("SELECT id, name FROM question_set");
 const findQuestionSetEditionStatement = db.prepare(`
     SELECT  question_set.id as question_set_id,
             question_set_edition.id as question_set_edition_id
@@ -80,27 +83,35 @@ const findGameByRoundAndTeamsStatement = db.prepare(`
     FROM game
     WHERE round_id = ? and team_one_id = ? AND team_two_id = ?
 `);
+const getPlayersBySetIdStatement = db.prepare(`
+    SELECT *
+    FROM player
+    WHERE question_set_id = ?
+`);
 
 const migrateTournaments = async () => {
-  try {
-    const subFolders = filterPaths(await fs.readdir(tournamentsPath, { withFileTypes: true }));
+  console.log("-".repeat(20));
+  console.log("Processing game QBJs for each tournament ...");
 
-    for (const subFolder of subFolders) {
-      const subFolderPath = path.join(tournamentsPath, subFolder);
-      const indexPath = path.join(subFolderPath, "index.json");
+  try {
+    const tournamentFolders = filterPaths(await fs.readdir(tournamentsPath, { withFileTypes: true }));
+
+    for (const tournamentFolder of tournamentFolders) {
+      const tournamentFolderPath = path.join(tournamentsPath, tournamentFolder);
+      const indexPath = path.join(tournamentFolderPath, "index.json");
 
       if (!existsSync(indexPath)) {
-        console.log(`Skipping ${subFolder} as 'index.json' file not found.`);
+        console.log(`Skipping folder \`${tournamentFolder}\`, since it doesn't contain an \`index.json\`.`);
         continue;
       }
 
       try {
         const tournamentData = await fs.readFile(indexPath, "utf8");
         const tournament = JSON.parse(tournamentData);
-        const gamesFilePath = path.join(subFolderPath, gamesFolderName);
+        const gamesFilePath = path.join(tournamentFolderPath, gamesFolderName);
         const {
           name: tournamentName,
-          set,
+          set: setName,
           edition,
           location,
           level,
@@ -116,15 +127,15 @@ const migrateTournaments = async () => {
           if (overWrite) {
             deleteTournamentStatement.run(existingTournamentId);
           } else {
-            console.log(`Skipping ${subFolder} as tournament is already in database.`);
+            console.log(`Skipping tournament ${tournamentName} in the folder \`${tournamentFolder}\`, since the tournament is already in the database.`);
             continue;
           }
         }
 
-        console.log(`Tournament: ${subFolder} | Set: ${set} | Edition: ${edition}`);
+        console.log(`Tournament: ${tournamentName} (\`${tournamentFolder}\`) | Set: ${setName} | Edition: ${edition}`);
         try {
           const { question_set_id: setId, question_set_edition_id: editionId } = findQuestionSetEditionStatement.get(
-            set,
+            setName,
             edition
           );
           const roundDictionary = {};
@@ -146,8 +157,8 @@ const migrateTournaments = async () => {
           // NOT recommended or documented, use the game_files folder and the qbj files if you have them
           if (rounds) {
             const gameDictionary = {};
-            const buzzesFilePath = path.join(subFolderPath, buzzesFileName);
-            const bonusesFilePath = path.join(subFolderPath, bonusesFileName);
+            const buzzesFilePath = path.join(tournamentFolderPath, buzzesFileName);
+            const bonusesFilePath = path.join(tournamentFolderPath, bonusesFileName);
             const buzzesContent = await fs.readFile(buzzesFilePath, "utf8");
             const buzzes = buzzesContent.split("\n").slice(1);
 
@@ -250,7 +261,7 @@ const migrateTournaments = async () => {
 
                 if (!packet) {
                   console.warn(
-                    `Unable to find tossup ${questionNumber} in packet ID ${packetId} of tournament ID ${tournamentId} (${tournamentName}) in game between ${team} and ${opponent}.`
+                    `Couldn't find tossup ${questionNumber} in packet ID ${packetId} of tournament ID ${tournamentId} (${tournamentName}) in game between ${team} and ${opponent}.`
                   );
                   continue;
                 }
@@ -313,7 +324,8 @@ const migrateTournaments = async () => {
           }
 
           if (!existsSync(gamesFilePath)) {
-            console.log(`\tSkipping ${subFolder} as ${gamesFolderName} folder not found.`);
+            console.log(`\tNot adding ${tournamentName} to the database, since a \`${gamesFolderName}\` folder was not found in the folder \`${tournamentFolder}\`.`);
+            deleteTournamentStatement.run(tournamentId);
             continue;
           }
 
@@ -324,6 +336,12 @@ const migrateTournaments = async () => {
             }),
             "qbj"
           );
+
+          if (gameFileDirents.length == 0) {
+            console.log(`\tNot adding ${tournamentName} to the database, since no games were found in the \`${gamesFolderName}\` subfolder of the folder \`${tournamentFolder}\`.`);
+            deleteTournamentStatement.run(tournamentId);
+            continue;
+          }
 
           for (const gameFileDirent of gameFileDirents) {
             const gameFilePath = path.join(gameFileDirent.parentPath, gameFileDirent.name);
@@ -455,7 +473,7 @@ const migrateTournaments = async () => {
 
                     if (!tossup) {
                       console.warn(
-                        `\tUnable to find tossup ${question_number} in packet #${packet.number} (${packet.descriptor}) of tournament ${tournamentId} (${tournamentName}) in round ${roundNumber} game between ${teamOneName} and ${teamTwoName}.`
+                        `\tCouldn't find tossup ${question_number} in packet #${packet.number} (${packet.descriptor}) of tournament ${tournamentId} (${tournamentName}) in round ${roundNumber} game between ${teamOneName} and ${teamTwoName}.`
                       );
                       return;
                     }
@@ -491,10 +509,8 @@ const migrateTournaments = async () => {
 
                         if (!bonusPart) {
                           console.warn(
-                            `Unable to find bonus with part ${index + 1} for ${
-                              bonus.question.question_number
-                            } in packet ID ${packetId}, which was directed to ${
-                              team.name
+                            `Couldn't find bonus with part ${index + 1} for ${bonus.question.question_number
+                            } in packet ID ${packetId}, which was directed to ${team.name
                             } at tournament ID ${tournamentId} (${tournamentName}).`
                           );
                           return;
@@ -507,27 +523,55 @@ const migrateTournaments = async () => {
                 });
               } catch (err) {
                 console.warn(
-                  `\tCouldn't find packet ${packetDescriptor} (${packetName}) in the \`packet_files\` folder for edition ${edition} for game ${gameFile.replaceAll(
+                  `Couldn't find packet ${packetDescriptor} (${packetName}) in the \`packet_files\` folder for edition ${edition} for game ${gameFile.replaceAll(
                     ".qbj",
                     ""
                   )}.`
                 );
+                console.log("This likely means that the \`packets\` field of the QBJ doesn't match any of the packet names in \`/sets/packets\`.");
                 console.log(err);
               }
             } catch (err) {
-              console.error(`Error occurred while parsing JSON in ${gameFilePath} and writing it to db:`, err);
+              console.error(`Error occurred while parsing and/or saving data in QBJ at \`${gameFilePath}\`:`, err);
             }
           }
         } catch (err) {
-          console.log(`\tCouldn't find edition ${edition} of question set ${set} for tournament ${tournamentName} in folder ${subFolder}.`);
+          console.log(`\tCouldn't find edition ${edition} of question set ${setName} for tournament ${tournamentName} in folder \`${tournamentFolder}\`.`);
         }
       } catch (err) {
         console.error(`Error reading ${indexPath}: `, err);
       }
     }
+
+    console.log("Processing tournaments finished.");
+
+    try {
+      console.log("-".repeat(20));
+      catchMisspelledPlayers();
+    } catch (err) {
+      console.error(`Error detecting potential misspelled player names: `, err);
+    }
+
+    console.log("-".repeat(20));
+    console.log(`Database ready: ${pathToFileURL(path.join(cwd(), `database.db`))}`);
   } catch (err) {
-    console.error("Error reading tournaments folder: ", err);
+    console.error("Error reading \`tournaments\` folder: ", err);
   }
 };
+
+const catchMisspelledPlayers = () => {
+  console.log("Detecting potential misspelled player names for each set ...");
+  let sets = findQuestionSetsStatement.all();
+  for (const set of sets) {
+    let setPlayers = getPlayersBySetIdStatement.all(set.id);
+    let misspelledPlayerNames = findSimilarNames(setPlayers.map(p => p.name));
+    console.log(`Set: ${set.name}`);
+    if (misspelledPlayerNames.length > 0) {
+      console.log("\t" + misspelledPlayerNames.map(s => `[${s.join(", ")}]`).join("\n\t"));
+    } else {
+      console.log("\tNo potential misspelled names detected.")
+    }
+  }
+}
 
 migrateTournaments();

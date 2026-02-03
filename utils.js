@@ -13,7 +13,7 @@ exports.filterPaths = (dir) => (
 exports.filterFiles = (dir, extension) => (
     dir.filter(f => f.name.endsWith(`.${extension}`))
 );
-exports.cleanName = (name) => (name.replaceAll(/\(([a-zA-Z0-9]+)\)/g, "").trim());
+exports.cleanName = (name) => (name.replaceAll(/\(([a-zA-Z0-9]+)\)/g, "").replaceAll(" ", " ").trim());
 exports.cleanPacketName = (name) => (name.replaceAll(".json", "").replaceAll("copy", "").replaceAll(/\((\d+)\)/g, "").trim());
 
 packetWords = ["packet", "round"];
@@ -49,8 +49,32 @@ exports.parsePacketMetadata = (packetName, index) => {
             packetDescriptor = index.toString();
         }
     } else {
-        console.log(`\tUnable to detect packet number or identifier for ${packetName}. Setting number to ${index} and identifier to ${packetName}.`);
+        console.log(`\tCouldn't detect packet number or identifier for ${packetName}. Setting number to ${index} and identifier to ${packetName}.`);
         packetDescriptor = packetName;
     }
     return { descriptor: packetDescriptor, number: packetNumber }
+}
+
+exports.findSimilarNames = (playerNames) => {
+    // Source - https://stackoverflow.com/a/55813146
+    // Posted by trincot
+    // Retrieved 2026-02-01, License - CC BY-SA 4.0
+
+    const nameMap = {};
+    const pairs = new Set;
+    for (const playerName of playerNames) {
+        for (const i in playerName + "_") { // Additional iteration to NOT delete a character
+            const key = (playerName.slice(0, i) + playerName.slice(+i + 1, playerName.length)).toLowerCase();
+            // Group words together where the removal from the same index leads to the same key
+            if (!nameMap[key]) nameMap[key] = Array.from({ length: key.length + 1 }, () => new Set);
+            // If NO character was removed, put the word in EACH group
+            for (const set of (+i < playerName.length ? [nameMap[key][i]] : nameMap[key])) {
+                if (set.has(playerName)) continue;
+                for (let similar of set) pairs.add(JSON.stringify([similar, playerName].sort()));
+                set.add(playerName);
+            }
+        }
+    }
+    const result = [...pairs].sort().map(JSON.parse); // sort is optional
+    return result;
 }
