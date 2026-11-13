@@ -52,6 +52,7 @@ const insertBonusPartStatement = db.prepare(
   "INSERT INTO bonus_part (bonus_id, part_number, part, part_sanitized, answer, answer_sanitized, answer_primary, value, difficulty_modifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
 );
 const findQuestionSetStatement = db.prepare("SELECT id FROM question_set WHERE slug = ?");
+const findQuestionSetsStatement = db.prepare("SELECT id, name FROM question_set");
 const findQuestionSetEditionStatement = db.prepare(
   "SELECT question_set_edition.id FROM question_set_edition JOIN question_set ON question_set_id = question_set.id WHERE question_set.slug = ? AND question_set_edition.slug = ? "
 );
@@ -460,6 +461,26 @@ const migrateQuestionSets = async () => {
     }
   } catch (err) {
     console.error("Error reading question sets folder: ", err);
+  }
+
+  try {
+    console.log("-".repeat(20));
+    console.log('List of categories across all sets:');
+    const category_list = db.prepare(`
+      SELECT DISTINCT category
+      FROM question
+      ORDER BY category
+    `).all();
+
+    if (category_list.length === 0) {
+      console.log('No categories found.');
+    } else {
+      for (const { category } of category_list) {
+        console.log(`\t* ${category === null ? '(NULL)' : category}`);
+      }
+    }
+  } finally {
+    db.close();
   }
 
   console.log("Processing sets finished.");
