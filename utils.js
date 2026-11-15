@@ -13,8 +13,18 @@ exports.filterPaths = (dir) => (
 exports.filterFiles = (dir, extension) => (
     dir.filter(f => f.name.endsWith(`.${extension}`))
 );
-exports.cleanName = (name) => (name.replaceAll(/\(([a-zA-Z0-9]+)\)/g, "").replaceAll(" ", " ").trim());
-exports.cleanPacketName = (name) => (name.replaceAll(".json", "").replaceAll("copy", "").replaceAll(/\((\d+)\)/g, "").trim());
+exports.cleanName = (name) => (name
+    .replaceAll(/\(([a-zA-Z0-9]+)\)/g, "")
+    .replaceAll(" ", " ")
+    .replaceAll(/\s+/g, " ")
+    .trim());
+exports.cleanPacketName = (name) => (name
+    .replaceAll(".json", "")
+    .replaceAll("copy", "")
+    .replaceAll(/\((\d+)\)/g, "")
+    .replaceAll(/\s+/g, " ")
+    .trim()
+);
 
 packetWords = ["packet", "round"];
 toTitleCase = (s) => (
