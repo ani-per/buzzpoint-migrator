@@ -357,6 +357,15 @@ const migrateTournaments = async () => {
               const teamOneName = cleanName(gameData.match_teams[0].team.name);
               const teamTwoName = cleanName(gameData.match_teams[1].team.name);
 
+              if (Object.hasOwn(gameData, "_round")) {
+                const roundField = gameData._round;
+                if (roundNumber != roundField) {
+                  console.warn(
+                    `\tGame between ${teamOneName} and ${teamTwoName} has different round number field (${roundField}) than round number in filename (${roundNumber}). | Link: ${pathToFileURL(gameFilePath).href}`
+                  );
+                }
+              }
+
               if (roundDictionary[roundNumber] && roundDictionary[roundNumber][packetName]) {
                 const gameRoundId = roundDictionary[roundNumber][packetName].roundId;
                 let existingGameCheck = findGameByRoundAndTeamsStatement.all(
@@ -473,7 +482,7 @@ const migrateTournaments = async () => {
 
                     if (!tossup) {
                       console.warn(
-                        `\tCouldn't find tossup ${question_number} in packet #${packet.number} (${packet.descriptor}) of tournament ${tournamentId} (${tournamentName}) in round ${roundNumber} game between ${teamOneName} and ${teamTwoName}.`
+                        `\tCouldn't find tossup ${question_number} in packet #${packet.number} (${packet.descriptor}) of tournament ${tournamentId} (${tournamentName}) in round ${roundNumber} game between ${teamOneName} and ${teamTwoName}. | Link: ${pathToFileURL(gameFilePath).href}`
                       );
                       return;
                     }
@@ -511,7 +520,7 @@ const migrateTournaments = async () => {
                           console.warn(
                             `Couldn't find bonus with part ${index + 1} for ${bonus.question.question_number
                             } in packet ID ${packetId}, which was directed to ${team.name
-                            } at tournament ID ${tournamentId} (${tournamentName}).`
+                            } at tournament ID ${tournamentId} (${tournamentName}). | Link: ${pathToFileURL(gameFilePath).href}`
                           );
                           return;
                         }
@@ -526,7 +535,7 @@ const migrateTournaments = async () => {
                   `Couldn't find packet ${packetDescriptor} (${packetName}) in the \`packet_files\` folder for edition ${edition} for game ${gameFile.replaceAll(
                     ".qbj",
                     ""
-                  )}.`
+                  )}. | Link: ${pathToFileURL(gameFilePath).href}`
                 );
                 console.log("This likely means that the \`packets\` field of the QBJ doesn't match any of the packet names in \`/sets/packets\`.");
                 console.log(err);
