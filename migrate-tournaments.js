@@ -153,9 +153,17 @@ const migrateTournaments = async () => {
             end_date
           );
 
+          let skipped_players = [];
+
+          if (!existsSync(gamesFilePath)) {
+            console.log(`\tNot adding ${tournamentName} to the database, since a \`${gamesFolderName}\` folder was not found in the folder \`${tournamentFolder}\`.`);
+            deleteTournamentStatement.run(tournamentId);
+            continue;
+          }
+
           // if round mappings, buzzes, and bonuses are part of index.json, use that instead of game_files
           // NOT recommended or documented, use the game_files folder and the qbj files if you have them
-          if (rounds) {
+          if (rounds) { // deprecated
             const gameDictionary = {};
             const buzzesFilePath = path.join(tournamentFolderPath, buzzesFileName);
             const bonusesFilePath = path.join(tournamentFolderPath, bonusesFileName);
@@ -323,12 +331,6 @@ const migrateTournaments = async () => {
             continue;
           }
 
-          if (!existsSync(gamesFilePath)) {
-            console.log(`\tNot adding ${tournamentName} to the database, since a \`${gamesFolderName}\` folder was not found in the folder \`${tournamentFolder}\`.`);
-            deleteTournamentStatement.run(tournamentId);
-            continue;
-          }
-
           const gameFileDirents = filterFiles(
             await fs.readdir(gamesFilePath, {
               withFileTypes: true,
@@ -415,7 +417,7 @@ const migrateTournaments = async () => {
                 }
 
                 // update team and player dictionaries if needed
-                for (let { team } of gameData.match_teams) {
+                for (let { team, match_players: match_players } of gameData.match_teams) {
                   let teamName = cleanName(team.name);
                   if (!teamDictionary[teamName]) {
                     const { lastInsertRowid: teamId } = insertTeamStatement.run(
@@ -427,9 +429,34 @@ const migrateTournaments = async () => {
                     teamDictionary[teamName] = teamId;
                   }
 
-                  for (let { name: playerName } of team.players) {
-                    playerName = cleanName(playerName);
+                  for (const player_data of match_players) {
+                    const playerName = cleanName(player_data.player.name);
                     let key = `${teamName}-${playerName}`;
+
+                    const skipped_entry = skipped_players.find(
+                      entry => entry.player === playerName && entry.team === teamName
+                    );
+                    if (skipped_entry) {
+                      if (player_data.tossups_heard > 0) {
+                        const skipped_entry = skipped_players.find(
+                          entry => entry.player === playerName && entry.team === teamName
+                        );
+                        skipped_entry.tossups_heard += player_data.tossups_heard;
+                      }
+                    } else if (player_data.tossups_heard <= 0) {
+                      skipped_players.push({
+                        player: playerName,
+                        team: teamName,
+                        tossups_heard: 0
+                      });
+                      console.log(
+                        `\tSkipping ${playerName} on ${teamName}, as they did not hear any tossups in round ${roundNumber}. | Link: ${pathToFileURL(gameFilePath).href}`
+                      );
+                    }
+
+                    if (player_data.tossups_heard <= 0) {
+                      continue;
+                    }
 
                     if (!playerDictionary[key]) {
                       let existingPlayers = findPlayerBySetIdStatement.all(playerName, setId);
